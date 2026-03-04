@@ -402,6 +402,9 @@
     <button class="option-btn" onclick="showScreen('confirmScreen')">
         Save Session Data Encrypted
     </button>
+    <button class="option-btn" onclick="showScreen('settingsScreen'); loadSettings();">
+        ⚙️ Settings
+    </button>
     <button class="back-btn" onclick="navigateBack('managementScreen')">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
@@ -479,8 +482,28 @@
     </button>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/nostr-tools@1.15.0/lib/nostr.bundle.min.js"></script>
-<script src="../Nostr-DM-Tools/nostrCloud.js"></script>
+<!-- Settings Screen -->
+<div class="screen hidden" id="settingsScreen">
+    <h2 class="title">Settings</h2>
+    
+    <div class="input-group">
+        <label class="input-label">Password Hash Length</label>
+        <p style="font-size: 0.85rem; color: #64748b; margin: 0.25rem 0 0.5rem;">
+            Number of hex characters from the hash (default: 16, max: 64)
+        </p>
+        <input type="number" class="input-field" id="hashLengthField" min="8" max="64" value="16">
+    </div>
+    
+    <button class="option-btn" onclick="saveSettings()">Save Settings</button>
+    <button class="back-btn" onclick="navigateBack('settingsScreen')">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+        </svg>
+        Back
+    </button>
+</div>
+
+<script src="./lib/nostr-tools.min.js"></script>
 <script src="./crypto-js.min.js"></script>
 <script src="./bip39WordList.js"></script>
 <script src="./script.js"></script>

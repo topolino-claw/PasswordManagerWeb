@@ -14,6 +14,12 @@ var nostrKeys = { nsec: "", npub: "" };
 const navigationHistory = ["welcomeScreen"];
 let currentScreenId = "welcomeScreen";
 
+// Default settings
+const DEFAULT_HASH_LENGTH = 16;
+var settings = {
+    hashLength: DEFAULT_HASH_LENGTH
+};
+
 // Update nonce UI from stored data when user or site changes
 userOrMailField.addEventListener("input", updateNonceFromLocalStorage);
 siteField.addEventListener("input", updateNonceFromLocalStorage);
@@ -290,7 +296,8 @@ async function showPassword() {
     */
     const concatenado = privateKeyField.value + "/" + userOrMailField.value + "/" + siteField.value + "/" + nonceValue;
     // Derive password entropy by hashing key, user, site, and nonce together
-    const entropiaContraseña = hash(concatenado).substring(0, 16);
+    const hashLen = settings.hashLength || DEFAULT_HASH_LENGTH;
+    const entropiaContraseña = hash(concatenado).substring(0, hashLen);
     passwordField.value = 'PASS' + entropiaContraseña + '249+';
     // Persist the nonce used to generate the password for reproducibility
     localStoredData["users"][userOrMailField.value][siteField.value] = nonceValue;
@@ -624,6 +631,7 @@ function loadEncryptedData() {
         privateKeyField.value = localStoredData["privateKey"]
         nostrKeys = deriveNostrKeys(privateKeyField.value);
         localStoredStatus = "loaded"
+        loadSettings();
         alert('Data loaded successfully.');
         showScreen("managementScreen")
         return localStoredData; // Parse the JSON string back into an object
@@ -960,6 +968,7 @@ window.restoreFromNostr = async function () {
                 const parsedData = JSON.parse(decrypted);
                 localStoredData = parsedData;
                 localStoredStatus = "loaded";
+                loadSettings();
 
                 alert("✅ Restore complete from NOSTR");
                 showScreen("managementScreen");
@@ -1217,6 +1226,7 @@ window.restoreFromNostrId = async function (eventId) {
                 const parsedData = JSON.parse(decrypted);
                 localStoredData = parsedData;
                 localStoredStatus = "loaded";
+                loadSettings();
 
                 alert("✅ Restore complete from NOSTR");
                 showScreen("managementScreen");
@@ -1235,3 +1245,57 @@ window.restoreFromNostrId = async function (eventId) {
     }
 };
 
+
+/**
+ * Load settings from localStoredData and populate the UI.
+ * @returns {void}
+ */
+function loadSettings() {
+    const hashLen = localStoredData.settings?.hashLength || settings.hashLength || DEFAULT_HASH_LENGTH;
+    settings.hashLength = hashLen;
+    const hashLengthField = document.getElementById('hashLengthField');
+    if (hashLengthField) {
+        hashLengthField.value = hashLen;
+    }
+}
+
+/**
+ * Save settings from UI to localStoredData.
+ * @returns {void}
+ */
+function saveSettings() {
+    const hashLengthField = document.getElementById('hashLengthField');
+    let hashLen = parseInt(hashLengthField?.value, 10) || DEFAULT_HASH_LENGTH;
+    
+    // Clamp to valid range (8-64)
+    hashLen = Math.max(8, Math.min(64, hashLen));
+    
+    settings.hashLength = hashLen;
+    
+    if (!localStoredData.settings) {
+        localStoredData.settings = {};
+    }
+    localStoredData.settings.hashLength = hashLen;
+    
+    alert(`Settings saved. Hash length: ${hashLen} characters.`);
+    navigateBack('settingsScreen');
+}
+
+/**
+ * Derive Nostr keys from a hex private key string.
+ * @param {string} hexPrivateKey - Hex-encoded private key.
+ * @returns {Promise<Object>} Object containing nsec and npub.
+ */
+async function deriveNostrKeys(hexPrivateKey) {
+    const { nip19, getPublicKey } = window.NostrTools;
+    
+    const utf8 = new TextEncoder().encode(hexPrivateKey);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", utf8);
+    const nostrHex = Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    const nsec = nip19.nsecEncode(nostrHex);
+    const npub = getPublicKey(nostrHex);
+    
+    return { nsec, npub };
+}

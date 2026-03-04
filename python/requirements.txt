@@ -1,7 +1,0 @@
-mnemonic
-cryptography
-# Optional support for interacting with the Nostr protocol.  The application
-# gracefully falls back to a local implementation when this dependency is not
-# available, but including it here allows the full experience when the package
-# can be installed.
-nostr
