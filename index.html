@@ -201,6 +201,14 @@
             color: white;
         }
 
+        /* Button Stack */
+        .button-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 100%;
+        }
+
         /* Password Display */
         .password-display {
             background: var(--surface);
@@ -526,15 +534,17 @@
             <p class="subtitle">Deterministic passwords.<br>No storage. No sync. Just math.</p>
         </div>
         <div class="spacer"></div>
-        <button class="btn btn-primary mb-8" onclick="showScreen('newWalletScreen')">
-            Create New Vault
-        </button>
-        <button class="btn btn-secondary mb-8" onclick="showScreen('restoreSeedScreen')">
-            I Have a Seed Phrase
-        </button>
-        <button class="btn btn-ghost" onclick="showScreen('unlockScreen')">
-            Unlock Saved Vault
-        </button>
+        <div class="button-stack">
+            <button class="btn btn-primary" onclick="showScreen('newWalletScreen')">
+                Create New Vault
+            </button>
+            <button class="btn btn-secondary" onclick="showScreen('restoreSeedScreen')">
+                I Have a Seed Phrase
+            </button>
+            <button class="btn btn-ghost" onclick="showScreen('unlockScreen')">
+                Unlock Saved Vault
+            </button>
+        </div>
         <div class="version-badge mt-24" style="justify-content: center;">
             <span>v3.0</span>
             <span>•</span>
@@ -555,12 +565,14 @@
         </p>
         <div id="seedGrid" class="seed-grid"></div>
         <div class="spacer"></div>
-        <button class="btn btn-secondary mb-8" onclick="generateNewSeed()">
-            🔄 Generate New
-        </button>
-        <button class="btn btn-primary" onclick="confirmSeedBackup()">
-            I've Written It Down
-        </button>
+        <div class="button-stack">
+            <button class="btn btn-secondary" onclick="generateNewSeed()">
+                🔄 Generate New
+            </button>
+            <button class="btn btn-primary" onclick="confirmSeedBackup()">
+                I've Written It Down
+            </button>
+        </div>
     </div>
 
     <!-- Screen: Verify Seed -->
@@ -616,12 +628,14 @@
             <input type="password" id="unlockPassword" placeholder="Password">
         </div>
         <div class="spacer"></div>
-        <button class="btn btn-primary" onclick="unlockVault()">
-            Unlock
-        </button>
-        <button class="btn btn-ghost mt-16" onclick="showScreen('restoreSeedScreen')">
-            Use seed phrase instead
-        </button>
+        <div class="button-stack">
+            <button class="btn btn-primary" onclick="unlockVault()">
+                Unlock
+            </button>
+            <button class="btn btn-ghost" onclick="showScreen('restoreSeedScreen')">
+                Use seed phrase instead
+            </button>
+        </div>
     </div>
 
     <!-- Screen: Main (Site List) -->
@@ -733,15 +747,17 @@
         <p class="text-muted text-sm mb-8">
             Backup your site list to decentralized Nostr relays. Your data is encrypted with your seed phrase.
         </p>
-        <button class="btn btn-primary mb-8" onclick="backupToNostr()">
-            ☁️ Backup Now
-        </button>
-        <button class="btn btn-secondary mb-8" onclick="restoreFromNostr()">
-            📥 Restore from Cloud
-        </button>
-        <button class="btn btn-ghost" onclick="openNostrHistory()">
-            📜 View Backup History
-        </button>
+        <div class="button-stack">
+            <button class="btn btn-primary" onclick="backupToNostr()">
+                ☁️ Backup Now
+            </button>
+            <button class="btn btn-secondary" onclick="restoreFromNostr()">
+                📥 Restore from Cloud
+            </button>
+            <button class="btn btn-ghost" onclick="openNostrHistory()">
+                📜 View Backup History
+            </button>
+        </div>
         <div id="nostrHistoryContainer" class="mt-24 hidden"></div>
     </div>
 
