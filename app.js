@@ -439,7 +439,10 @@ async function unlockVault() {
     
     try {
         const key = hash(password);
-        const stored = JSON.parse(localStorage.getItem('vaultEncrypted') || '{}');
+        // Check both new and legacy storage keys for backwards compatibility
+        let stored = JSON.parse(localStorage.getItem('vaultEncrypted') || '{}');
+        const legacy = JSON.parse(localStorage.getItem('encryptedDataStorage') || '{}');
+        stored = { ...legacy, ...stored };
         const encrypted = stored[key];
         
         if (!encrypted) {
@@ -450,7 +453,16 @@ async function unlockVault() {
         const decrypted = CryptoJS.AES.decrypt(encrypted, password).toString(CryptoJS.enc.Utf8);
         const data = JSON.parse(decrypted);
         
-        vault = data;
+        // Handle both new format (users/settings/seedPhrase) and legacy format (privateKey/users)
+        if (data.privateKey) {
+            // Legacy format - privateKey was stored directly
+            vault.privateKey = data.privateKey;
+            vault.users = data.users || {};
+            vault.settings = data.settings || { hashLength: 16 };
+        } else {
+            vault = data;
+        }
+        
         nostrKeys = await deriveNostrKeys(vault.privateKey);
         
         showToast('Vault unlocked!');
@@ -471,7 +483,14 @@ function saveEncrypted() {
     }
     
     const key = hash(pass1);
-    const encrypted = CryptoJS.AES.encrypt(JSON.stringify(vault), pass1).toString();
+    // Include privateKey for backwards compatibility with legacy unlock
+    const saveData = {
+        privateKey: vault.privateKey,
+        seedPhrase: vault.seedPhrase,
+        users: vault.users,
+        settings: vault.settings
+    };
+    const encrypted = CryptoJS.AES.encrypt(JSON.stringify(saveData), pass1).toString();
     
     const stored = JSON.parse(localStorage.getItem('vaultEncrypted') || '{}');
     stored[key] = encrypted;
@@ -509,6 +528,11 @@ function saveAdvancedSettings() {
 }
 
 function showSeedPhrase() {
+    if (!vault.seedPhrase) {
+        showToast('Seed phrase not available (unlocked from legacy storage)');
+        return;
+    }
+    
     const grid = document.getElementById('viewSeedGrid');
     grid.innerHTML = '';
     
