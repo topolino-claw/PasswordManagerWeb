@@ -573,12 +573,66 @@
             margin-top: 4px;
             word-break: break-all;
         }
+
+        /* Loading Modal */
+        .modal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            text-align: center;
+            padding: 32px;
+        }
+
+        .loading-spinner {
+            font-size: 48px;
+            animation: spin 1.5s linear infinite;
+            margin-bottom: 16px;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .modal-content p {
+            color: var(--text);
+            font-size: 15px;
+            white-space: pre-line;
+            line-height: 1.6;
+        }
+
+        .modal-content p small {
+            display: block;
+            margin-top: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'SF Mono', 'Fira Code', monospace;
+        }
     </style>
 </head>
 <body>
     <div class="app-container">
     <!-- Toast Notification -->
     <div id="toast" class="toast">Copied!</div>
+
+    <!-- Loading Modal -->
+    <div id="loadingModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="loading-spinner">🔄</div>
+            <p id="loadingText">Looking for backups...</p>
+        </div>
+    </div>
 
     <!-- Screen: Welcome -->
     <div id="welcomeScreen" class="screen">

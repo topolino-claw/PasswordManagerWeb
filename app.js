@@ -69,6 +69,15 @@ function showToast(message) {
     setTimeout(() => toast.classList.remove('show'), 2000);
 }
 
+function showLoading(text) {
+    document.getElementById('loadingText').textContent = text;
+    document.getElementById('loadingModal').classList.remove('hidden');
+}
+
+function hideLoading() {
+    document.getElementById('loadingModal').classList.add('hidden');
+}
+
 // ============================================
 // BIP39 Seed Phrase Functions (preserved from original)
 // ============================================
@@ -229,7 +238,7 @@ async function verifySeedBackup() {
     
     if (valid) {
         await initializeVault(vault.seedPhrase);
-        showToast('Vault created!');
+        await checkForRemoteBackups();
         showScreen('mainScreen');
     } else {
         showToast('Incorrect words. Try again.');
@@ -246,7 +255,7 @@ async function restoreFromSeed() {
     }
     
     await initializeVault(input);
-    showToast('Vault restored!');
+    await checkForRemoteBackups();
     showScreen('mainScreen');
 }
 
@@ -257,6 +266,85 @@ async function initializeVault(seedPhrase) {
     vault.seedPhrase = seedPhrase.replace(/\s+/g, ' ').trim().toLowerCase();
     vault.privateKey = await derivePrivateKey(vault.seedPhrase);
     nostrKeys = await deriveNostrKeys(vault.privateKey);
+}
+
+async function checkForRemoteBackups() {
+    const npubShort = nostrKeys.npub.slice(0, 16) + '...';
+    
+    showLoading(`Looking for remote backups...\n${npubShort}`);
+    
+    try {
+        const found = await silentRestoreFromNostr();
+        hideLoading();
+        
+        if (found) {
+            showToast('Synced from cloud backup!');
+        } else {
+            showToast('Vault ready');
+        }
+    } catch (e) {
+        console.error('Backup check failed:', e);
+        hideLoading();
+        showToast('Vault ready (offline)');
+    }
+}
+
+async function silentRestoreFromNostr() {
+    const { nip04, relayInit, getPublicKey } = window.NostrTools;
+    
+    if (!vault.privateKey) return false;
+    
+    const utf8 = new TextEncoder().encode(vault.privateKey);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
+    const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    const pk = getPublicKey(sk);
+    
+    let latest = null;
+    
+    for (const url of RELAYS) {
+        try {
+            const relay = relayInit(url);
+            await new Promise((resolve, reject) => {
+                const t = setTimeout(() => reject('timeout'), 5000);
+                relay.on('connect', () => { clearTimeout(t); resolve(); });
+                relay.on('error', reject);
+                relay.connect();
+            });
+            
+            const sub = relay.sub([{ kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"], limit: 1 }]);
+            
+            await new Promise(resolve => {
+                const t = setTimeout(() => { sub.unsub(); resolve(); }, 6000);
+                sub.on('event', e => {
+                    if (!latest || e.created_at > latest.created_at) latest = e;
+                });
+                sub.on('eose', () => { clearTimeout(t); sub.unsub(); resolve(); });
+            });
+            
+            relay.close();
+            
+            // If we found one, try to use it
+            if (latest) break;
+        } catch (e) { console.error(url, e); }
+    }
+    
+    if (latest) {
+        try {
+            const decrypted = await nip04.decrypt(sk, latest.pubkey, latest.content);
+            const data = JSON.parse(decrypted);
+            vault.users = { ...vault.users, ...data.users };
+            if (data.settings) {
+                vault.settings = { ...vault.settings, ...data.settings };
+                debugMode = vault.settings.debugMode || false;
+            }
+            return true;
+        } catch (e) {
+            console.error('Decrypt failed:', e);
+            return false;
+        }
+    }
+    
+    return false;
 }
 
 function lockVault() {
