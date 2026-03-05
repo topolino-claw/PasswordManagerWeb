@@ -36,7 +36,33 @@
             color: var(--text);
             min-height: 100dvh;
             display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }
+
+        .app-container {
+            width: 100%;
+            max-width: 400px;
+            min-height: 100dvh;
+            display: flex;
             flex-direction: column;
+            position: relative;
+        }
+
+        @media (min-width: 500px) {
+            body {
+                padding: 24px;
+                align-items: center;
+            }
+            
+            .app-container {
+                min-height: auto;
+                height: auto;
+                max-height: 100%;
+                border-radius: 24px;
+                box-shadow: 0 0 0 1px var(--border), 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                overflow: hidden;
+            }
         }
 
         .hidden { display: none !important; }
@@ -123,14 +149,21 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            width: 100%;
-            padding: 16px;
+            width: auto;
+            min-width: 200px;
+            margin-left: auto;
+            margin-right: auto;
+            padding: 16px 32px;
             font-size: 16px;
             font-weight: 600;
             border: none;
             border-radius: var(--radius);
             cursor: pointer;
             transition: all 0.2s;
+        }
+
+        .btn-full {
+            width: 100%;
         }
 
         .btn-primary {
@@ -304,11 +337,18 @@
             opacity: 0;
             transition: all 0.3s ease;
             z-index: 1000;
+            white-space: nowrap;
         }
 
         .toast.show {
             transform: translateX(-50%) translateY(0);
             opacity: 1;
+        }
+
+        @media (min-width: 500px) {
+            .toast {
+                bottom: 48px;
+            }
         }
 
         /* Empty State */
@@ -479,6 +519,7 @@
     </style>
 </head>
 <body>
+    <div class="app-container">
     <!-- Toast Notification -->
     <div id="toast" class="toast">Copied!</div>
 
@@ -792,6 +833,8 @@
             📋 Copy to Clipboard
         </button>
     </div>
+
+    </div><!-- /app-container -->
 
     <!-- Scripts -->
     <script src="bip39WordList.js"></script>
