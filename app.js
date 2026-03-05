@@ -10,13 +10,14 @@ let vault = {
     privateKey: '',
     seedPhrase: '',
     users: {},
-    settings: { hashLength: 16 }
+    settings: { hashLength: 16, debugMode: false }
 };
 
 let nostrKeys = { nsec: '', npub: '' };
 let currentNonce = 0;
 let passwordVisible = false;
 let navigationStack = ['welcomeScreen'];
+let debugMode = false;
 
 const DEFAULT_HASH_LENGTH = 16;
 
@@ -47,6 +48,8 @@ function showScreen(screenId) {
         generateNewSeed();
     } else if (screenId === 'advancedScreen') {
         document.getElementById('hashLengthSetting').value = vault.settings.hashLength || 16;
+        debugMode = vault.settings.debugMode || false;
+        document.getElementById('debugModeToggle').checked = debugMode;
     }
 }
 
@@ -523,8 +526,23 @@ function downloadData() {
 function saveAdvancedSettings() {
     const len = parseInt(document.getElementById('hashLengthSetting').value) || 16;
     vault.settings.hashLength = Math.max(8, Math.min(64, len));
+    vault.settings.debugMode = debugMode;
     showToast('Settings saved');
     showScreen('settingsScreen');
+}
+
+function toggleDebugMode() {
+    debugMode = document.getElementById('debugModeToggle').checked;
+    vault.settings.debugMode = debugMode;
+}
+
+function encodeNevent(eventId, relays = []) {
+    const { nip19 } = window.NostrTools;
+    try {
+        return nip19.neventEncode({ id: eventId, relays: relays.slice(0, 2) });
+    } catch (e) {
+        return null;
+    }
 }
 
 function showSeedPhrase() {
@@ -583,6 +601,7 @@ async function backupToNostr() {
         event.sig = await signEvent(event, sk);
         
         let success = 0;
+        let successRelays = [];
         for (const url of RELAYS) {
             try {
                 const relay = relayInit(url);
@@ -595,10 +614,28 @@ async function backupToNostr() {
                 relay.publish(event);
                 relay.close();
                 success++;
+                successRelays.push(url);
             } catch (e) { console.error(url, e); }
         }
         
-        showToast(success > 0 ? `Backed up to ${success} relays` : 'Backup failed');
+        if (success > 0) {
+            showToast(`Backed up to ${success} relays`);
+            
+            // Debug: show nevent link
+            if (debugMode) {
+                const nevent = encodeNevent(event.id, successRelays);
+                if (nevent) {
+                    const link = `https://njump.me/${nevent}`;
+                    setTimeout(() => {
+                        if (confirm(`Debug: View event on njump.me?\n\n${event.id.slice(0, 32)}...`)) {
+                            window.open(link, '_blank');
+                        }
+                    }, 500);
+                }
+            }
+        } else {
+            showToast('Backup failed');
+        }
     } catch (e) {
         console.error(e);
         showToast('Backup error');
@@ -713,14 +750,20 @@ async function openNostrHistory() {
         }
         
         container.innerHTML = `<h3 class="mb-8">${unique.length} backup(s)</h3>` + 
-            unique.map(e => `
+            unique.map(e => {
+                const nevent = encodeNevent(e.id, [e.relay]);
+                const debugLink = debugMode && nevent 
+                    ? `<a class="debug-link" href="https://njump.me/${nevent}" target="_blank" onclick="event.stopPropagation()">🔗 njump.me/${nevent.slice(0, 20)}...</a>` 
+                    : '';
+                return `
                 <div class="site-item" onclick="restoreFromId('${e.id}')">
                     <div class="site-info">
                         <div class="site-name">${new Date(e.created_at * 1000).toLocaleString()}</div>
                         <div class="site-user">${e.id.slice(0, 16)}...</div>
+                        ${debugLink}
                     </div>
                 </div>
-            `).join('');
+            `}).join('');
     } catch (e) {
         console.error(e);
         container.innerHTML = '<p class="text-muted">Error loading history</p>';
