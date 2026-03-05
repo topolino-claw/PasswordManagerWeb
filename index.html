@@ -42,26 +42,27 @@
 
         .app-container {
             width: 100%;
-            max-width: 400px;
+            max-width: 480px;
             min-height: 100dvh;
             display: flex;
             flex-direction: column;
             position: relative;
         }
 
-        @media (min-width: 500px) {
+        @media (min-width: 540px) {
             body {
-                padding: 24px;
+                padding: 40px 24px;
                 align-items: center;
+                background: #080808;
             }
             
             .app-container {
-                min-height: auto;
-                height: auto;
-                max-height: 100%;
-                border-radius: 24px;
-                box-shadow: 0 0 0 1px var(--border), 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                min-height: 700px;
+                max-height: 900px;
+                border-radius: 32px;
+                box-shadow: 0 0 0 1px var(--border), 0 25px 50px -12px rgba(0, 0, 0, 0.8);
                 overflow: hidden;
+                background: var(--bg);
             }
         }
 
@@ -149,21 +150,14 @@
             align-items: center;
             justify-content: center;
             gap: 8px;
-            width: auto;
-            min-width: 200px;
-            margin-left: auto;
-            margin-right: auto;
-            padding: 16px 32px;
+            width: 100%;
+            padding: 16px 24px;
             font-size: 16px;
             font-weight: 600;
             border: none;
             border-radius: var(--radius);
             cursor: pointer;
             transition: all 0.2s;
-        }
-
-        .btn-full {
-            width: 100%;
         }
 
         .btn-primary {
