@@ -1,126 +1,86 @@
-# Password Manager v2
-A deterministic password vault with optional Nostr cloud backups.
+# Vault v3
 
-For a deeper technical overview, see [How It Works](docs/how-it-works.md).
+A deterministic password manager that generates passwords on-the-fly using a BIP39 seed phrase. No storage, no sync, just math.
 
-## Table of Contents
-- [How It Works](docs/how-it-works.md)
-- [Introduction](#introduction)
-- [Why Use This Password Manager?](#why-use-this-password-manager)
-- [Getting Started](#getting-started)
-  - [Access the Web Version](#access-the-web-version)
-  - [Set Up Your Mnemonic Key](#set-up-your-mnemonic-key)
-  - [How the Mnemonic Becomes the Private Key](#how-the-mnemonic-becomes-the-private-key)
-  - [Generate a Password](#generate-a-password)
-  - [How Passwords Are Created](#how-passwords-are-created)
-  - [Encrypt Local Data (Optional)](#encrypt-local-data-optional)
-  - [Backup Your Seed Phrase](#backup-your-seed-phrase)
-  - [Decrypt Stored Data](#decrypt-stored-data)
-- [Nostr Integration](#nostr-integration)
-  - [Key Derivation](#key-derivation)
-  - [Backing Up to Nostr](#backing-up-to-nostr)
-  - [Restoring from Nostr](#restoring-from-nostr)
-  - [Backup History](#backup-history)
-- [Using It Offline & On Mobile Devices](#using-it-offline--on-mobile-devices)
-- [Potential Risks & Considerations](#potential-risks--considerations)
-- [Final Thoughts](#final-thoughts)
-- [Source Code](#source-code)
+## Features
 
-## Introduction
-This project is a single-page password manager that never stores your passwords. Instead, it deterministically derives them from a BIP39 seed phrase combined with your username, the site domain and a nonce. It can run entirely offline and even works from a mobile browser.
+- **Deterministic passwords** — Same inputs = same password, every time
+- **BIP39 seed phrase** — Industry standard, write it down and recover anywhere
+- **Offline first** — Works without internet, even from a local file
+- **Optional cloud backup** — Sync your site list via Nostr relays
+- **Local encryption** — Save to device with password protection
+- **Mobile-friendly** — Touch-optimized, works great on phones
 
----
+## Quick Start
 
-## Why Use This Password Manager?
-- **No Central Storage** – passwords are never uploaded anywhere.
-- **Deterministic Generation** – get the same password every time for the same inputs.
-- **Offline Ready** – the app works without an internet connection.
-- **BIP39 Backup** – your master key can be written down as a standard seed phrase.
-- **Nonce System** – change a password by increasing the nonce value.
-- **Optional Local Encryption** – save encrypted session data in the browser for convenience.
+1. Open [Vault](https://fabricio333.github.io/PasswordManagerWeb/) or download `index.html` for offline use
+2. Create a new vault or restore an existing seed phrase
+3. Add sites by searching and hitting Enter
+4. Copy your password — it's generated instantly
 
----
+## How It Works
 
-## Getting Started
-### Access the Web Version
-Open [Password Manager Web](https://fabricio333.github.io/PasswordManagerWeb/) in your browser. You can also download the repo and open `index.html` directly for offline use.
+### Password Generation
 
-### Set Up Your Mnemonic Key
-Generate or restore a BIP39 seed phrase. This phrase is your master key – keep it safe.
-
-### How the Mnemonic Becomes the Private Key
-1. Each word is validated against the BIP39 list and turned into its numeric index.
-2. The indices form a long decimal string that is converted to hexadecimal.
-3. This hex string is your raw private key used for password generation.
-
-### Generate a Password
-1. Enter your username or email.
-2. Enter the website URL.
-3. Adjust the nonce if you need multiple passwords for the same site.
-4. Click **Show Password**.
-
-### How Passwords Are Created
-The password is:
-```text
-PASS + SHA256(privateKey + '/' + username + '/' + site + '/' + nonce).substring(0,16) + '249+'
 ```
-Increment the nonce to produce a new password while keeping the same seed phrase.
-
-### Encrypt Local Data (Optional)
-You can encrypt your session data (private key and nonce dictionary) with a password so it is stored securely in localStorage.
-
-### Backup Your Seed Phrase
-Always write down your seed phrase so you can recover your vault.
-
-### Decrypt Stored Data
-Use the same encryption password to load previously stored session data.
-
----
-
-## Nostr Integration
-The application can optionally back up your encrypted state using the [Nostr](https://nostr.com/) protocol.
-
-### Key Derivation
-When you verify your seed phrase, it is hashed once with SHA‑256. The result becomes the Nostr secret key (`nsec`). The corresponding public key (`npub`) is derived with `NostrTools`. This happens in `verifySeedAndMoveNext`.
-
-### Backing Up to Nostr
-The function `backupToNostr` encrypts your session data using `nip04` with your own key pair and publishes it as a kind `1` event tagged `nostr-pwd-backup` to multiple relays:
-```javascript
-const event = {
-    kind: 1,
-    pubkey: pk,
-    created_at: Math.floor(Date.now() / 1000),
-    tags: [["t", "nostr-pwd-backup"]],
-    content: encrypted,
-};
+password = "PASS" + SHA256(privateKey + "/" + username + "/" + site + "/" + version).slice(0, 16) + "249+"
 ```
-Each relay is contacted and the event is signed with your `nsec` before being sent.
 
-### Restoring from Nostr
-`restoreFromNostr` downloads the latest backup event from the relays using your `npub`, decrypts it with `nip04` and loads the data back into the app.
+- `privateKey`: Derived from your BIP39 seed phrase
+- `username`: Your email or username for the site
+- `site`: The domain (e.g., `github.com`)
+- `version`: Starts at 0, increment if you need a new password
 
-### Backup History
-`openNostrHistory` lists all past backup events found across relays. Tapping one uses `restoreFromNostrId` to load that specific event. You can also manually paste an event ID from the **Restore Using Event ID** screen.
+### Seed Phrase → Private Key
 
----
+1. Each BIP39 word maps to an index (0–2047)
+2. Indices are padded to 4 digits and concatenated
+3. The decimal string is converted to hexadecimal
 
-## Using It Offline & On Mobile Devices
-Simply save the web page or open it directly from the repository on your device. All features, including password generation, work without a network connection. Nostr backups obviously require connectivity.
+### Nostr Backup
 
----
+Your site list (not your seed phrase) can be encrypted and published to Nostr relays:
 
-## Potential Risks & Considerations
-- **Seed Phrase Security** – losing it means losing your vault.
-- **Local Storage Encryption** – forget the password and the data is unreadable.
-- **Phishing** – double‑check site URLs when generating passwords.
-- **Browser Security** – a compromised browser could leak your seed phrase.
+1. Seed phrase → SHA256 → Nostr private key
+2. Site list → NIP-04 encrypted → kind:1 event tagged `nostr-pwd-backup`
+3. Published to multiple relays for redundancy
 
----
+## Files
 
-## Final Thoughts
-This project offers a lightweight password solution with an optional decentralised backup powered by Nostr. Because everything is deterministic, you remain in control of your credentials at all times.
+- `index.html` — Main app (v3, redesigned UI)
+- `app.js` — Application logic
+- `index-legacy.html` — Previous version (v2)
+- `script.js` — Legacy v2 logic
+- `bip39WordList.js` — BIP39 wordlist
+- `crypto-js.min.js` — SHA256/AES
+- `lib/nostr-tools.min.js` — Nostr protocol
 
-Try it out: [Password Manager Web](https://fabricio333.github.io/PasswordManagerWeb/)
+## Security
 
-## Source Code
-View the full code on [GitHub](https://github.com/fabricio333/PasswordManagerWeb).
+- **Seed phrase = master key** — Keep it safe, offline, written on paper
+- **Never transmitted** — Passwords are generated locally, never sent anywhere
+- **Encryption password** — If you save locally, don't forget this password
+- **Browser security** — Use a trusted browser, avoid extensions that might read inputs
+
+## Changelog
+
+### v3.0
+- Complete UI redesign — dark mode, mobile-first
+- Simplified navigation — 2 main flows instead of 8+ screens  
+- Site search with fuzzy matching
+- "Version" instead of "nonce"
+- One-tap copy with toast feedback
+- Cleaner settings organization
+
+### v2.0
+- Nostr backup/restore
+- Configurable hash length
+- Local encryption
+
+## License
+
+MIT
+
+## Source
+
+[GitHub](https://github.com/fabricio333/PasswordManagerWeb)

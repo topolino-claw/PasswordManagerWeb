@@ -2,512 +2,749 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecureVault Manager</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0f0f0f">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Vault</title>
     <style>
-        /* Base Styles */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
+
         :root {
-            --primary: #6366f1;
-            --secondary: #4f46e5;
-            --background: #f8fafc;
-            --text: #1e293b;
+            --bg: #0f0f0f;
+            --surface: #1a1a1a;
+            --surface-hover: #242424;
+            --border: #2a2a2a;
+            --text: #ffffff;
+            --text-muted: #888888;
+            --accent: #6366f1;
+            --accent-hover: #818cf8;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --radius: 12px;
+            --radius-lg: 16px;
         }
 
         body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            background: var(--background);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
             color: var(--text);
-            margin: 0;
-            min-height: 100vh;
+            min-height: 100dvh;
             display: flex;
-            justify-content: center;
-            align-items: center;
-            transition: background 0.3s ease;
+            flex-direction: column;
         }
 
+        .hidden { display: none !important; }
+
+        /* Screen Container */
         .screen {
-            background: white;
-            padding: 2rem;
-            border-radius: 1.5rem;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            width: 90%;
-            max-width: 500px;
-            transform: translateY(20px);
-            opacity: 0;
-            animation: slideUp 0.4s ease forwards;
-        }
-
-        /* Welcome Screen */
-        .welcome-screen {
-            text-align: center;
-        }
-
-        .title {
-            font-size: 2rem;
-            margin-bottom: 1.5rem;
-            color: var(--secondary);
-            font-weight: 700;
-        }
-
-        .option-btn {
-            width: 100%;
-            padding: 1rem;
-            border: none;
-            border-radius: 0.75rem;
-            background: var(--primary);
-            color: white;
-            font-size: 1.1rem;
-            margin: 0.5rem 0;
-            cursor: pointer;
-            transition: transform 0.2s ease, background 0.3s ease;
-        }
-
-        .option-btn:hover {
-            background: var(--secondary);
-            transform: translateY(-2px);
-        }
-
-        /* Back Button */
-        .back-btn {
-            padding: 0.75rem 1.25rem;
-            border: none;
-            border-radius: 0.75rem;
-            background: #e2e8f0;
-            color: var(--text);
-            font-size: 0.9rem;
-            margin-top: 0.75rem;
-            cursor: pointer;
-            transition: background 0.3s ease;
+            flex: 1;
             display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            width: auto;
-        }
-
-        .back-btn:hover {
-            background: #cbd5e1;
-        }
-
-        .back-btn svg {
-            width: 16px;
-            height: 16px;
-        }
-
-        /* Navigation Container */
-        .nav-container {
-            display: flex;
-            justify-content: space-between;
-            width: 100%;
-            margin-top: 1rem;
-        }
-
-        /* Input Screens */
-        .input-group {
-            margin: 1.5rem 0;
-        }
-
-        .input-label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-weight: 500;
-        }
-
-        .input-field {
-            width: 100%;
-            padding: 1rem;
-            border: 2px solid #e2e8f0;
-            border-radius: 0.75rem;
-            font-size: 1rem;
-            transition: border-color 0.3s ease;
-        }
-
-        .input-field:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-
-        /* Nonce Controls */
-        .nonce-container {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .nonce-btn {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            border: none;
-            background: var(--primary);
-            color: white;
-            font-size: 1.2rem;
-            cursor: pointer;
-            transition: background 0.3s ease;
-        }
-
-        .nonce-btn:hover {
-            background: var(--secondary);
-        }
-
-        /* Password Visibility Toggle */
-        .password-toggle {
-            position: absolute;
-            right: 8px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-            opacity: 0.6;
-            transition: opacity 0.2s ease;
-        }
-
-        .password-toggle:hover {
-            opacity: 1;
-        }
-
-        /* Animations */
-        @keyframes slideUp {
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            flex-direction: column;
+            padding: 24px;
+            padding-top: max(24px, env(safe-area-inset-top));
+            padding-bottom: max(24px, env(safe-area-inset-bottom));
+            animation: fadeIn 0.2s ease;
         }
 
         @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Hidden screens */
-        .hidden {
-            display: none;
+        /* Typography */
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
         }
 
-        .input-field {
+        h2 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 15px;
+            margin-bottom: 32px;
+        }
+
+        /* Inputs */
+        .input-group {
+            margin-bottom: 16px;
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        input, textarea {
             width: 100%;
-            box-sizing: border-box; /* Critical for containment */
-            resize: vertical; /* Disable horizontal resizing */
-            padding: 12px;
-            margin-top: 8px; /* Matches label spacing */
-            border: 1px solid #ccc; /* Match your app's border style */
-            border-radius: 8px;
-            font-family: monospace; /* Aligns words neatly */
-        }
-        #seedPhraseField {
-            height: 100px; /* Adjust height as needed */
-            resize: vertical; /* Allow vertical resizing */
-            width: 100%; /* Ensure it takes full width */
-            padding: 10px; /* Add padding for better readability */
-            box-sizing: border-box; /* Include padding in the element's total width and height */
+            padding: 14px 16px;
+            font-size: 16px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--text);
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
         }
 
-        /* Hide the up and down arrows for number input */
-        input[type="number"]::-webkit-outer-spin-button,
-        input[type="number"]::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-            margin: 0;
+        input:focus, textarea:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
         }
 
-        input[type="number"] {
-            -moz-appearance: textfield; /* Firefox */
+        input::placeholder, textarea::placeholder {
+            color: var(--text-muted);
         }
 
-        .input-wrapper {
-            position: relative;
+        textarea {
+            resize: none;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* Buttons */
+        .btn {
             display: flex;
             align-items: center;
+            justify-content: center;
+            gap: 8px;
             width: 100%;
+            padding: 16px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: var(--radius);
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
-        .input-field {
-            width: 100%;
-            padding-right: 35px; /* Ensures text doesn't go under the button */
+        .btn-primary {
+            background: var(--accent);
+            color: white;
         }
 
-        .copy-button {
+        .btn-primary:hover, .btn-primary:active {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover, .btn-secondary:active {
+            background: var(--surface-hover);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--text-muted);
+            padding: 12px;
+        }
+
+        .btn-ghost:hover {
+            color: var(--text);
+        }
+
+        .btn-icon {
+            width: 48px;
+            height: 48px;
+            padding: 0;
+            border-radius: 50%;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* Password Display */
+        .password-display {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            margin: 16px 0;
+            text-align: center;
+        }
+
+        .password-value {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            word-break: break-all;
+            margin-bottom: 16px;
+            min-height: 28px;
+        }
+
+        .password-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+
+        /* Site List */
+        .site-list {
+            flex: 1;
+            overflow-y: auto;
+            margin: 0 -24px;
+            padding: 0 24px;
+        }
+
+        .site-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px;
+            background: var(--surface);
+            border-radius: var(--radius);
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .site-item:hover, .site-item:active {
+            background: var(--surface-hover);
+        }
+
+        .site-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+        }
+
+        .site-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .site-name {
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .site-user {
+            font-size: 13px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Search */
+        .search-container {
+            position: relative;
+            margin-bottom: 16px;
+        }
+
+        .search-container input {
+            padding-left: 44px;
+        }
+
+        .search-icon {
             position: absolute;
-            right: 8px;
+            left: 16px;
             top: 50%;
             transform: translateY(-50%);
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-            opacity: 0.6;
-            transition: opacity 0.2s ease;
+            color: var(--text-muted);
         }
 
-        .copy-button:hover {
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: max(24px, env(safe-area-inset-bottom));
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--success);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 100px;
+            font-weight: 500;
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
             opacity: 1;
+        }
+
+        /* Empty State */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: var(--text-muted);
+            padding: 40px;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Seed Phrase Grid */
+        .seed-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin: 16px 0;
+        }
+
+        .seed-word {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 8px;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .seed-word span {
+            color: var(--text-muted);
+            font-size: 11px;
+            margin-right: 4px;
+        }
+
+        /* Settings */
+        .settings-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .settings-item:last-child {
+            border-bottom: none;
+        }
+
+        .settings-label {
+            font-weight: 500;
+        }
+
+        .settings-desc {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Version Badge */
+        .version-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            background: var(--surface);
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        /* Spacer */
+        .spacer { flex: 1; }
+        .mt-auto { margin-top: auto; }
+        .mt-16 { margin-top: 16px; }
+        .mt-24 { margin-top: 24px; }
+        .mb-8 { margin-bottom: 8px; }
+        .text-center { text-align: center; }
+        .text-muted { color: var(--text-muted); }
+        .text-sm { font-size: 13px; }
+
+        /* Nonce Control */
+        .nonce-control {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            margin: 8px 0;
+        }
+
+        .nonce-control button {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .nonce-control button:active {
+            background: var(--surface-hover);
+        }
+
+        .nonce-value {
+            font-size: 14px;
+            color: var(--text-muted);
         }
     </style>
 </head>
-
 <body>
+    <!-- Toast Notification -->
+    <div id="toast" class="toast">Copied!</div>
 
-<!-- Welcome Screen -->
-<div class="screen welcome-screen" id="welcomeScreen">
-    <h1 class="title">Welcome to YOUR Password Manager!</h1>
-    <button class="option-btn" onclick="showScreen('recoverScreen')">
-        Load Key With Seed Phrase
-    </button>
-    <button class="option-btn" onclick="showScreen('decryptScreen')">
-        Load Key From Local Storage
-    </button>
-    <button class="option-btn" onclick="showScreen('newMnemonicScreen');generateValidMnemonic()">
-        Generate New Key
-    </button>
-    <button class="option-btn" onclick="window.open('https://github.com/Fabricio333/PasswordManagerWeb/blob/master/README.md', '_blank')">
-        Read README (How to Use)
-    </button>
-</div>
-
-<!-- Recover Key Screen -->
-<div class="screen hidden" id="recoverScreen">
-    <h2 class="title">Recovery Phrase</h2>
-    <div class="input-group">
-        <label class="input-label">Enter 12-word Recovery Phrase</label>
-        <textarea
-                class="input-field"
-                rows="3"
-                placeholder="zoo zoo zoo..."
-                id="seedPhraseField"
-        ></textarea>
-    </div>
-    <button class="option-btn" onclick="verifySeedAndMoveNext()">
-        Continue
-    </button>
-    <button class="back-btn" onclick="navigateBack('recoverScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Decryption Screen -->
-<div class="screen hidden" id="decryptScreen">
-    <h2 class="title">Decrypt Data</h2>
-
-    <div class="input-group">
-        <label class="input-label">Decryption Password</label>
-        <input type="password" class="input-field" id="encryptionPassword">
-    </div>
-
-    <button class="option-btn" onclick="loadEncryptedData()">
-        Decrypt Local Storage
-    </button>
-    <button class="back-btn" onclick="navigateBack('decryptScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Generation Screen -->
-<div class="screen hidden" id="newMnemonicScreen">
-    <h2 class="title">Generate a New Mnemonic</h2>
-    <p>Make sure you back up your seed phrase in a secure location, preferably offline.</p>
-
-    <div class="input-group">
-        <label for="seedPhraseField" class="input-label">Seed Phrase:</label>
-        <textarea class="input-field" id="newSeedPhraseField" readonly></textarea>
-    </div>
-
-    <button class="option-btn" onclick="showScreen('verifySeedBackUpScreen')" >I understand.</button>
-    <button class="back-btn" onclick="navigateBack('newMnemonicScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Seed Back Up Verification Screen -->
-<div class="screen hidden" id="verifySeedBackUpScreen">
-    <h2 class="title">Verify Your Seed Phrase</h2>
-    <p>Please enter the following words from your seed phrase:</p>
-
-    <div id="wordPrompts"></div>
-
-    <button class="option-btn" id="verifyButton" onclick="verifySeedPhrase()">Verify</button>
-    <p id="verificationResult"></p>
-    <button class="back-btn" onclick="navigateBack('verifySeedBackUpScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Management Screen -->
-<div class="screen hidden" id="managementScreen">
-    <h2 class="title">Manage Credentials</h2>
-
-    <div class="input-group">
-        <label class="input-label">Private Key</label>
-        <div class="input-wrapper">
-            <input type="password" class="input-field" id="privateKeyField">
-            <button type="button" class="password-toggle" id="togglePrivateKeyBtn" onclick="togglePrivateKeyVisibility()">👁️</button>
+    <!-- Screen: Welcome -->
+    <div id="welcomeScreen" class="screen">
+        <div class="spacer"></div>
+        <div class="text-center">
+            <h1>🔐</h1>
+            <h1>Vault</h1>
+            <p class="subtitle">Deterministic passwords.<br>No storage. No sync. Just math.</p>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary mb-8" onclick="showScreen('newWalletScreen')">
+            Create New Vault
+        </button>
+        <button class="btn btn-secondary mb-8" onclick="showScreen('restoreSeedScreen')">
+            I Have a Seed Phrase
+        </button>
+        <button class="btn btn-ghost" onclick="showScreen('unlockScreen')">
+            Unlock Saved Vault
+        </button>
+        <div class="version-badge mt-24" style="justify-content: center;">
+            <span>v3.0</span>
+            <span>•</span>
+            <span>Offline Ready</span>
         </div>
     </div>
 
-    <div class="input-group">
-        <label class="input-label">User/Email</label>
-        <input type="text" class="input-field" id="userOrMailField">
-    </div>
-
-    <div class="input-group">
-        <label class="input-label">Site URL</label>
-        <input type="text" class="input-field" id="siteField">
-    </div>
-
-
-    <div class="input-group">
-        <label class="input-label">Change Nonce</label>
-        <button class="nonce-btn" onclick="decrementSiteNonce()">-</button>
-        <input type="number" class="input-field" value="0" style="max-width: 100px;" id="nonceField" readonly>
-        <button class="nonce-btn" onclick="incrementSiteNonce()">+</button>
-    </div>
-
-    <div class="input-group">
-        <label class="input-label">Site Password:</label>
-        <div class="input-wrapper">
-            <input type="text" class="input-field" id="passwordField">
-            <button class="copy-button" onclick="copyElementToClipboard('passwordField')">📋</button>
+    <!-- Screen: Create New Wallet -->
+    <div id="newWalletScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="goBack()">←</button>
+                <h2 style="margin:0">Your Seed Phrase</h2>
+            </div>
         </div>
-    </div>
-
-    <button class="option-btn" onclick="showPassword()">
-        Show Password
-    </button>
-    <button class="option-btn" onclick="backupToNostr()">
-        Backup to Nostr
-    </button>
-    <button class="option-btn" onclick="restoreFromNostr()">
-        Restore Backup from Nostr
-    </button>
-    <button class="option-btn" onclick="showScreen('restoreNostrIdScreen')">
-        Restore Using Event ID
-    </button>
-    <button class="option-btn" onclick="openNostrHistory()">
-        Nostr Backup History
-    </button>
-    <button class="option-btn" onclick="openEditNonces()">
-        Edit Nonces
-    </button>
-    <button class="option-btn" onclick="showScreen('confirmScreen')">
-        Save Session Data Encrypted
-    </button>
-    <button class="option-btn" onclick="showScreen('settingsScreen'); loadSettings();">
-        ⚙️ Settings
-    </button>
-    <button class="back-btn" onclick="navigateBack('managementScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Encryption Confirmation -->
-<div class="screen hidden" id="confirmScreen">
-    <h2 class="title">Encrypt Session Data</h2>
-    <p>Be Careful, it stores the private master key</p>
-    <div class="input-group">
-        <label class="input-label">Encryption Password</label>
-        <input type="password" class="input-field" id="encryptPass1">
-    </div>
-
-    <div class="input-group">
-        <label class="input-label">Repeat Password</label>
-        <input type="password" class="input-field" id="encryptPass2">
-    </div>
-
-    <button class="option-btn" onclick="saveEncryptedData()">
-        Save Encrypted Data
-    </button>
-    <button class="back-btn" onclick="navigateBack('confirmScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Edit Nonces Screen -->
-<div class="screen hidden" id="editNoncesScreen">
-    <h2 class="title">Edit Nonces</h2>
-    <textarea class="input-field" id="noncesEditor" rows="10"></textarea>
-    <button class="option-btn" onclick="saveEditedNonces()">Save Nonces</button>
-    <button class="option-btn" onclick="downloadNoncesJson()">Download Nonces JSON</button>
-    <button class="back-btn" onclick="navigateBack('editNoncesScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Restore From Event ID Screen -->
-<div class="screen hidden" id="restoreNostrIdScreen">
-    <h2 class="title">Restore via Event ID</h2>
-    <div class="input-group">
-        <label class="input-label" for="nostrEventIdField">Event ID</label>
-        <input type="text" class="input-field" id="nostrEventIdField">
-    </div>
-    <button class="option-btn" onclick="const id=document.getElementById('nostrEventIdField').value.trim(); if(id){restoreFromNostrId(id);} else { alert('Enter an Event ID'); }">
-        Restore Backup
-    </button>
-    <button class="back-btn" onclick="navigateBack('restoreNostrIdScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Nostr History Screen -->
-<div class="screen hidden" id="nostrHistoryScreen">
-    <h2 class="title">Nostr Backup History</h2>
-    <div id="nostrHistoryList"></div>
-    <button class="back-btn" onclick="navigateBack('nostrHistoryScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
-
-<!-- Settings Screen -->
-<div class="screen hidden" id="settingsScreen">
-    <h2 class="title">Settings</h2>
-    
-    <div class="input-group">
-        <label class="input-label">Password Hash Length</label>
-        <p style="font-size: 0.85rem; color: #64748b; margin: 0.25rem 0 0.5rem;">
-            Number of hex characters from the hash (default: 16, max: 64)
+        <p class="text-muted text-sm mb-8">
+            Write these 12 words down and store them safely. This is the only way to recover your vault.
         </p>
-        <input type="number" class="input-field" id="hashLengthField" min="8" max="64" value="16">
+        <div id="seedGrid" class="seed-grid"></div>
+        <div class="spacer"></div>
+        <button class="btn btn-secondary mb-8" onclick="generateNewSeed()">
+            🔄 Generate New
+        </button>
+        <button class="btn btn-primary" onclick="confirmSeedBackup()">
+            I've Written It Down
+        </button>
     </div>
-    
-    <button class="option-btn" onclick="saveSettings()">Save Settings</button>
-    <button class="back-btn" onclick="navigateBack('settingsScreen')">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-        </svg>
-        Back
-    </button>
-</div>
 
-<script src="./lib/nostr-tools.min.js"></script>
-<script src="./crypto-js.min.js"></script>
-<script src="./bip39WordList.js"></script>
-<script src="./script.js"></script>
+    <!-- Screen: Verify Seed -->
+    <div id="verifySeedScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="goBack()">←</button>
+                <h2 style="margin:0">Verify Backup</h2>
+            </div>
+        </div>
+        <p class="text-muted text-sm mb-8">
+            Enter the requested words to confirm you've saved your seed phrase.
+        </p>
+        <div id="verifyInputs"></div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="verifySeedBackup()">
+            Verify & Continue
+        </button>
+    </div>
 
+    <!-- Screen: Restore Seed -->
+    <div id="restoreSeedScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="goBack()">←</button>
+                <h2 style="margin:0">Restore Vault</h2>
+            </div>
+        </div>
+        <div class="input-group">
+            <label>Enter your 12-word seed phrase</label>
+            <textarea id="restoreSeedInput" rows="4" placeholder="word1 word2 word3 ..."></textarea>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="restoreFromSeed()">
+            Restore Vault
+        </button>
+    </div>
+
+    <!-- Screen: Unlock Saved -->
+    <div id="unlockScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="goBack()">←</button>
+                <h2 style="margin:0">Unlock Vault</h2>
+            </div>
+        </div>
+        <div class="input-group">
+            <label>Enter your unlock password</label>
+            <input type="password" id="unlockPassword" placeholder="Password">
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="unlockVault()">
+            Unlock
+        </button>
+        <button class="btn btn-ghost mt-16" onclick="showScreen('restoreSeedScreen')">
+            Use seed phrase instead
+        </button>
+    </div>
+
+    <!-- Screen: Main (Site List) -->
+    <div id="mainScreen" class="screen hidden">
+        <div class="header">
+            <h1>Vault</h1>
+            <button class="btn btn-ghost btn-icon" onclick="showScreen('settingsScreen')">⚙️</button>
+        </div>
+        <div class="search-container">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="siteSearch" placeholder="Search or add site..." oninput="filterSites()" onkeydown="handleSearchEnter(event)">
+        </div>
+        <div id="siteList" class="site-list"></div>
+        <div id="emptyState" class="empty-state hidden">
+            <div class="empty-state-icon">🔐</div>
+            <p>No sites yet</p>
+            <p class="text-sm mt-16">Type a site name above and press Enter to add</p>
+        </div>
+    </div>
+
+    <!-- Screen: Generate Password -->
+    <div id="generateScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="showScreen('mainScreen')">←</button>
+                <h2 style="margin:0" id="generateTitle">Generate Password</h2>
+            </div>
+        </div>
+        <div class="input-group">
+            <label>Site / App</label>
+            <input type="text" id="genSite" placeholder="example.com">
+        </div>
+        <div class="input-group">
+            <label>Username / Email</label>
+            <input type="text" id="genUser" placeholder="you@email.com">
+        </div>
+        <div class="password-display">
+            <div class="password-value" id="genPassword">••••••••••••</div>
+            <div class="nonce-control">
+                <button onclick="decrementNonce()">−</button>
+                <span class="nonce-value">Version <span id="nonceDisplay">1</span></span>
+                <button onclick="incrementNonce()">+</button>
+            </div>
+            <div class="password-actions">
+                <button class="btn btn-secondary" onclick="togglePasswordVisibility()" style="width:auto; padding: 10px 20px;">
+                    <span id="visibilityIcon">👁️</span>
+                </button>
+                <button class="btn btn-primary" onclick="copyPassword()" style="width:auto; padding: 10px 20px;">
+                    📋 Copy
+                </button>
+            </div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="saveAndCopy()">
+            Save & Copy Password
+        </button>
+    </div>
+
+    <!-- Screen: Settings -->
+    <div id="settingsScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="showScreen('mainScreen')">←</button>
+                <h2 style="margin:0">Settings</h2>
+            </div>
+        </div>
+        <div class="settings-item" onclick="showScreen('backupScreen')">
+            <div>
+                <div class="settings-label">☁️ Cloud Backup</div>
+                <div class="settings-desc">Sync via Nostr relays</div>
+            </div>
+            <span>→</span>
+        </div>
+        <div class="settings-item" onclick="showScreen('encryptScreen')">
+            <div>
+                <div class="settings-label">💾 Save Locally</div>
+                <div class="settings-desc">Encrypt & save to this device</div>
+            </div>
+            <span>→</span>
+        </div>
+        <div class="settings-item" onclick="showScreen('exportScreen')">
+            <div>
+                <div class="settings-label">📤 Export Data</div>
+                <div class="settings-desc">Download your site list</div>
+            </div>
+            <span>→</span>
+        </div>
+        <div class="settings-item" onclick="showScreen('advancedScreen')">
+            <div>
+                <div class="settings-label">🔧 Advanced</div>
+                <div class="settings-desc">Hash length, seed phrase</div>
+            </div>
+            <span>→</span>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-danger" onclick="lockVault()">
+            🔒 Lock Vault
+        </button>
+    </div>
+
+    <!-- Screen: Backup (Nostr) -->
+    <div id="backupScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="showScreen('settingsScreen')">←</button>
+                <h2 style="margin:0">Cloud Backup</h2>
+            </div>
+        </div>
+        <p class="text-muted text-sm mb-8">
+            Backup your site list to decentralized Nostr relays. Your data is encrypted with your seed phrase.
+        </p>
+        <button class="btn btn-primary mb-8" onclick="backupToNostr()">
+            ☁️ Backup Now
+        </button>
+        <button class="btn btn-secondary mb-8" onclick="restoreFromNostr()">
+            📥 Restore from Cloud
+        </button>
+        <button class="btn btn-ghost" onclick="openNostrHistory()">
+            📜 View Backup History
+        </button>
+        <div id="nostrHistoryContainer" class="mt-24 hidden"></div>
+    </div>
+
+    <!-- Screen: Encrypt Local -->
+    <div id="encryptScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="showScreen('settingsScreen')">←</button>
+                <h2 style="margin:0">Save Locally</h2>
+            </div>
+        </div>
+        <p class="text-muted text-sm mb-8">
+            Save your vault to this device with a password. You can unlock it later without your seed phrase.
+        </p>
+        <div class="input-group">
+            <label>Password</label>
+            <input type="password" id="encryptPass1" placeholder="Enter password">
+        </div>
+        <div class="input-group">
+            <label>Confirm Password</label>
+            <input type="password" id="encryptPass2" placeholder="Confirm password">
+        </div>
+        <div class="spacer"></div>
+        <button class="btn btn-primary" onclick="saveEncrypted()">
+            💾 Save to Device
+        </button>
+    </div>
+
+    <!-- Screen: Export -->
+    <div id="exportScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="showScreen('settingsScreen')">←</button>
+                <h2 style="margin:0">Export Data</h2>
+            </div>
+        </div>
+        <p class="text-muted text-sm mb-8">
+            Download your saved sites and password versions as a JSON file.
+        </p>
+        <button class="btn btn-primary" onclick="downloadData()">
+            📥 Download JSON
+        </button>
+    </div>
+
+    <!-- Screen: Advanced -->
+    <div id="advancedScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="showScreen('settingsScreen')">←</button>
+                <h2 style="margin:0">Advanced</h2>
+            </div>
+        </div>
+        <div class="input-group">
+            <label>Password Hash Length (8-64)</label>
+            <input type="number" id="hashLengthSetting" min="8" max="64" value="16">
+            <p class="text-muted text-sm mt-8">Changing this will generate different passwords.</p>
+        </div>
+        <button class="btn btn-secondary mt-16" onclick="saveAdvancedSettings()">
+            Save Settings
+        </button>
+        <div class="settings-item mt-24" onclick="showSeedPhrase()">
+            <div>
+                <div class="settings-label">🔑 View Seed Phrase</div>
+                <div class="settings-desc">Show your 12-word backup</div>
+            </div>
+            <span>→</span>
+        </div>
+    </div>
+
+    <!-- Screen: View Seed -->
+    <div id="viewSeedScreen" class="screen hidden">
+        <div class="header">
+            <div class="header-left">
+                <button class="btn btn-ghost btn-icon" onclick="showScreen('advancedScreen')">←</button>
+                <h2 style="margin:0">Seed Phrase</h2>
+            </div>
+        </div>
+        <p class="text-muted text-sm mb-8">
+            Keep this safe. Anyone with these words can access your passwords.
+        </p>
+        <div id="viewSeedGrid" class="seed-grid"></div>
+        <button class="btn btn-secondary mt-24" onclick="copySeedPhrase()">
+            📋 Copy to Clipboard
+        </button>
+    </div>
+
+    <!-- Scripts -->
+    <script src="bip39WordList.js"></script>
+    <script src="crypto-js.min.js"></script>
+    <script src="lib/nostr-tools.min.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>
-
