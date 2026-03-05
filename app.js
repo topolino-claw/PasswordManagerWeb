@@ -777,12 +777,138 @@ async function restoreFromId(eventId) {
 }
 
 // ============================================
+// Seed Phrase Autocomplete
+// ============================================
+let activeSuggestionIndex = -1;
+let currentSuggestions = [];
+
+function onSeedInput(event) {
+    const textarea = event.target;
+    const value = textarea.value;
+    const cursorPos = textarea.selectionStart;
+    
+    // Find current word being typed
+    const beforeCursor = value.slice(0, cursorPos);
+    const wordMatch = beforeCursor.match(/[a-z]+$/i);
+    const currentWord = wordMatch ? wordMatch[0].toLowerCase() : '';
+    
+    // Update word count
+    const wordCount = value.trim().split(/\s+/).filter(w => w.length > 0).length;
+    document.getElementById('wordCount').textContent = wordCount;
+    
+    // Show suggestions
+    const suggestions = document.getElementById('seedSuggestions');
+    
+    if (currentWord.length < 1) {
+        suggestions.classList.add('hidden');
+        currentSuggestions = [];
+        return;
+    }
+    
+    // Filter BIP39 words
+    currentSuggestions = words
+        .filter(w => w.startsWith(currentWord))
+        .slice(0, 6);
+    
+    if (currentSuggestions.length === 0) {
+        suggestions.classList.add('hidden');
+        return;
+    }
+    
+    // If exact match and only one suggestion, hide
+    if (currentSuggestions.length === 1 && currentSuggestions[0] === currentWord) {
+        suggestions.classList.add('hidden');
+        return;
+    }
+    
+    activeSuggestionIndex = 0;
+    renderSuggestions(currentWord);
+    suggestions.classList.remove('hidden');
+}
+
+function renderSuggestions(typed) {
+    const suggestions = document.getElementById('seedSuggestions');
+    suggestions.innerHTML = currentSuggestions.map((word, i) => {
+        const matchPart = word.slice(0, typed.length);
+        const restPart = word.slice(typed.length);
+        return `<div class="seed-suggestion ${i === activeSuggestionIndex ? 'active' : ''}" 
+                     onclick="selectSuggestion('${word}')">
+            <span class="seed-suggestion-match">${matchPart}</span>${restPart}
+        </div>`;
+    }).join('');
+}
+
+function onSeedKeydown(event) {
+    const suggestions = document.getElementById('seedSuggestions');
+    
+    if (suggestions.classList.contains('hidden') || currentSuggestions.length === 0) {
+        return;
+    }
+    
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        activeSuggestionIndex = (activeSuggestionIndex + 1) % currentSuggestions.length;
+        renderSuggestions(getCurrentTypedWord());
+    } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        activeSuggestionIndex = activeSuggestionIndex <= 0 
+            ? currentSuggestions.length - 1 
+            : activeSuggestionIndex - 1;
+        renderSuggestions(getCurrentTypedWord());
+    } else if (event.key === 'Tab' || event.key === 'Enter') {
+        if (currentSuggestions.length > 0) {
+            event.preventDefault();
+            selectSuggestion(currentSuggestions[activeSuggestionIndex]);
+        }
+    } else if (event.key === 'Escape') {
+        suggestions.classList.add('hidden');
+    }
+}
+
+function getCurrentTypedWord() {
+    const textarea = document.getElementById('restoreSeedInput');
+    const cursorPos = textarea.selectionStart;
+    const beforeCursor = textarea.value.slice(0, cursorPos);
+    const wordMatch = beforeCursor.match(/[a-z]+$/i);
+    return wordMatch ? wordMatch[0].toLowerCase() : '';
+}
+
+function selectSuggestion(word) {
+    const textarea = document.getElementById('restoreSeedInput');
+    const cursorPos = textarea.selectionStart;
+    const value = textarea.value;
+    
+    // Find where current word starts
+    const beforeCursor = value.slice(0, cursorPos);
+    const wordMatch = beforeCursor.match(/[a-z]+$/i);
+    const wordStart = wordMatch ? cursorPos - wordMatch[0].length : cursorPos;
+    
+    // Replace current word with selected word + space
+    const newValue = value.slice(0, wordStart) + word + ' ' + value.slice(cursorPos);
+    textarea.value = newValue;
+    
+    // Move cursor after the inserted word
+    const newCursorPos = wordStart + word.length + 1;
+    textarea.setSelectionRange(newCursorPos, newCursorPos);
+    textarea.focus();
+    
+    // Hide suggestions and update word count
+    document.getElementById('seedSuggestions').classList.add('hidden');
+    currentSuggestions = [];
+    
+    const wordCount = newValue.trim().split(/\s+/).filter(w => w.length > 0).length;
+    document.getElementById('wordCount').textContent = wordCount;
+}
+
+// ============================================
 // Init
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
     // Check if there's saved encrypted data
     const stored = localStorage.getItem('vaultEncrypted');
-    if (stored && Object.keys(JSON.parse(stored)).length > 0) {
-        // Show unlock option more prominently
+    const legacy = localStorage.getItem('encryptedDataStorage');
+    if ((stored && Object.keys(JSON.parse(stored)).length > 0) ||
+        (legacy && Object.keys(JSON.parse(legacy)).length > 0)) {
+        // Could highlight unlock option
     }
 });
