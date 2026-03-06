@@ -15,6 +15,7 @@ let vault = {
 
 let nostrKeys = { nsec: '', npub: '' };
 let currentNonce = 0;
+let originalNonce = 0;
 let passwordVisible = false;
 let navigationStack = ['welcomeScreen'];
 let debugMode = false;
@@ -213,7 +214,7 @@ function confirmSeedBackup() {
         div.className = 'input-group';
         div.innerHTML = `
             <label>Word #${i + 1}</label>
-            <input type="text" class="verify-word" data-index="${i}" placeholder="Enter word ${i + 1}">
+            <input type="text" class="verify-word" data-index="${i}" placeholder="Enter word ${i + 1}" onkeydown="if(event.key==='Enter')verifySeedBackup()">
         `;
         container.appendChild(div);
     });
@@ -421,16 +422,27 @@ function openSite(site, user, nonce) {
     document.getElementById('genSite').value = site;
     document.getElementById('genUser').value = user;
     currentNonce = nonce || 0;
+    originalNonce = currentNonce;
     document.getElementById('nonceDisplay').textContent = currentNonce + 1;
     passwordVisible = false;
     document.getElementById('genPassword').textContent = '••••••••••••';
     document.getElementById('visibilityIcon').textContent = '👁️';
+    updateNonceIndicator();
     
     if (site && user) {
         updatePassword();
     }
     
     showScreen('generateScreen');
+}
+
+function updateNonceIndicator() {
+    const nonceControl = document.querySelector('.nonce-control');
+    if (currentNonce !== originalNonce) {
+        nonceControl.classList.add('nonce-changed');
+    } else {
+        nonceControl.classList.remove('nonce-changed');
+    }
 }
 
 function updatePassword() {
@@ -466,6 +478,7 @@ function togglePasswordVisibility() {
 function incrementNonce() {
     currentNonce++;
     document.getElementById('nonceDisplay').textContent = currentNonce + 1;
+    updateNonceIndicator();
     if (passwordVisible) updatePassword();
 }
 
@@ -473,6 +486,7 @@ function decrementNonce() {
     if (currentNonce > 0) {
         currentNonce--;
         document.getElementById('nonceDisplay').textContent = currentNonce + 1;
+        updateNonceIndicator();
         if (passwordVisible) updatePassword();
     }
 }
@@ -486,36 +500,34 @@ function copyPassword() {
         return;
     }
     
+    // Always save when copying
+    if (!vault.users[user]) vault.users[user] = {};
+    vault.users[user][site] = currentNonce;
+    originalNonce = currentNonce;
+    updateNonceIndicator();
+    
     const pass = generatePassword(
         vault.privateKey, user, site, currentNonce,
         vault.settings.hashLength || DEFAULT_HASH_LENGTH
     );
     
     navigator.clipboard.writeText(pass).then(() => {
-        showToast('Password copied!');
+        showToast('Saved & copied!');
     }).catch(() => {
         showToast('Copy failed');
     });
+    
+    // Background sync to Nostr
+    backupToNostrSilent();
 }
 
 function saveAndCopy() {
-    const site = document.getElementById('genSite').value.trim();
-    const user = document.getElementById('genUser').value.trim();
-    
-    if (!site || !user) {
-        showToast('Enter site and username');
-        return;
-    }
-    
-    // Save to vault
-    if (!vault.users[user]) vault.users[user] = {};
-    vault.users[user][site] = currentNonce;
-    
-    // Copy password
     copyPassword();
-    
-    // Go back
     showScreen('mainScreen');
+}
+
+function backupToNostrSilent() {
+    backupToNostr(true).catch(e => console.error('Silent backup failed:', e));
 }
 
 // ============================================
@@ -588,6 +600,7 @@ function saveEncrypted() {
     localStorage.setItem('vaultEncrypted', JSON.stringify(stored));
     
     showToast('Vault saved!');
+    backupToNostrSilent();
     showScreen('settingsScreen');
 }
 
@@ -661,11 +674,11 @@ function copySeedPhrase() {
 // ============================================
 // Nostr Backup (preserved & simplified from original)
 // ============================================
-async function backupToNostr() {
+async function backupToNostr(silent = false) {
     const { nip04, relayInit, getEventHash, signEvent, getPublicKey } = window.NostrTools;
     
     if (!vault.privateKey) {
-        showToast('Vault not initialized');
+        if (!silent) showToast('Vault not initialized');
         return;
     }
     
@@ -707,7 +720,7 @@ async function backupToNostr() {
         }
         
         if (success > 0) {
-            showToast(`Backed up to ${success} relays`);
+            if (!silent) showToast(`Backed up to ${success} relays`);
             
             // Debug: show nevent link
             if (debugMode) {
@@ -722,11 +735,11 @@ async function backupToNostr() {
                 }
             }
         } else {
-            showToast('Backup failed');
+            if (!silent) showToast('Backup failed');
         }
     } catch (e) {
         console.error(e);
-        showToast('Backup error');
+        if (!silent) showToast('Backup error');
     }
 }
 
