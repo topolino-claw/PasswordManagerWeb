@@ -19,7 +19,9 @@ let originalNonce = 0;
 let passwordVisible = false;
 let navigationStack = ['welcomeScreen'];
 let debugMode = false;
+let inactivityTimer = null;
 
+const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_HASH_LENGTH = 16;
 
 const RELAYS = [
@@ -267,6 +269,7 @@ async function initializeVault(seedPhrase) {
     vault.seedPhrase = seedPhrase.replace(/\s+/g, ' ').trim().toLowerCase();
     vault.privateKey = await derivePrivateKey(vault.seedPhrase);
     nostrKeys = await deriveNostrKeys(vault.privateKey);
+    resetInactivityTimer();
 }
 
 async function checkForRemoteBackups() {
@@ -349,6 +352,8 @@ async function silentRestoreFromNostr() {
 }
 
 function lockVault() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    inactivityTimer = null;
     vault = { privateKey: '', seedPhrase: '', users: {}, settings: { hashLength: 16 } };
     nostrKeys = { nsec: '', npub: '' };
     navigationStack = ['welcomeScreen'];
@@ -568,6 +573,7 @@ async function unlockVault() {
         
         nostrKeys = await deriveNostrKeys(vault.privateKey);
         
+        resetInactivityTimer();
         showToast('Vault unlocked!');
         showScreen('mainScreen');
     } catch (e) {
@@ -1045,9 +1051,32 @@ function selectSuggestion(word) {
 }
 
 // ============================================
+// Inactivity Auto-Lock
+// ============================================
+function resetInactivityTimer() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    // Only set timer if vault is unlocked (privateKey present)
+    if (vault.privateKey) {
+        inactivityTimer = setTimeout(() => {
+            lockVault();
+            location.reload();
+        }, INACTIVITY_TIMEOUT_MS);
+    }
+}
+
+function setupInactivityListeners() {
+    const events = ['click', 'keydown', 'touchstart', 'scroll', 'mousemove'];
+    events.forEach(evt => {
+        document.addEventListener(evt, resetInactivityTimer, { passive: true });
+    });
+}
+
+// ============================================
 // Init
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
+    setupInactivityListeners();
+
     // Check if there's saved encrypted data
     const stored = localStorage.getItem('vaultEncrypted');
     const legacy = localStorage.getItem('encryptedDataStorage');
