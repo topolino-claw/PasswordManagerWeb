@@ -54,7 +54,7 @@ function showScreen(screenId) {
     if (screenId === 'mainScreen') {
         renderSiteList();
     } else if (screenId === 'newWalletScreen') {
-        generateNewSeed();
+        generateNewSeed(true);
     } else if (screenId === 'advancedScreen') {
         document.getElementById('hashLengthSetting').value = vault.settings.hashLength || 16;
         debugMode = vault.settings.debugMode || false;
@@ -185,10 +185,31 @@ function generatePassword(privateKey, user, site, nonce, hashLength = 16) {
     return 'PASS' + entropy + '249+';
 }
 
+/**
+ * Calculate effective entropy bits of a generated password.
+ * hex chars = 4 bits each. Fixed prefix/suffix add known charset expansion.
+ */
+function getPasswordStrength(hashLength) {
+    // Each hex char = 4 bits of entropy from SHA-256
+    const hexBits = hashLength * 4;
+    // Total password: "PASS" (fixed) + hex + "249+" (fixed)
+    // Effective entropy comes only from the hex portion
+    const totalLen = 4 + hashLength + 4;
+    
+    if (hexBits >= 80) return { bits: hexBits, label: 'Excellent', color: 'var(--success)', len: totalLen };
+    if (hexBits >= 64) return { bits: hexBits, label: 'Strong', color: 'var(--success)', len: totalLen };
+    if (hexBits >= 48) return { bits: hexBits, label: 'Good', color: 'var(--accent)', len: totalLen };
+    return { bits: hexBits, label: 'Weak', color: 'var(--danger)', len: totalLen };
+}
+
 // ============================================
 // Seed Phrase UI
 // ============================================
-async function generateNewSeed() {
+async function generateNewSeed(isInitial = false) {
+    // Only confirm if there's already a seed loaded (re-generating)
+    if (!isInitial && vault.seedPhrase && vault.privateKey) {
+        if (!confirm('Generate a new seed phrase? This will replace the current one.')) return;
+    }
     const mnemonic = await generateMnemonic();
     vault.seedPhrase = mnemonic;
     
@@ -343,7 +364,10 @@ async function silentRestoreFromNostr() {
     return false;
 }
 
-function lockVault() {
+function lockVault(skipConfirm = false) {
+    if (!skipConfirm && vault.privateKey) {
+        if (!confirm('Lock vault? Make sure you have your seed phrase saved.')) return;
+    }
     if (inactivityTimer) clearTimeout(inactivityTimer);
     inactivityTimer = null;
     if (clipboardClearTimer) clearTimeout(clipboardClearTimer);
@@ -435,6 +459,13 @@ function openSite(site, user, nonce) {
     document.getElementById('visibilityIcon').textContent = '👁️';
     updateNonceIndicator();
     
+    // Always show strength indicator
+    const strengthEl = document.getElementById('passwordStrength');
+    if (strengthEl) {
+        const s = getPasswordStrength(vault.settings.hashLength || DEFAULT_HASH_LENGTH);
+        strengthEl.innerHTML = `<span style="color:${s.color}">● ${s.label}</span> · ${s.bits}-bit · ${s.len} chars`;
+    }
+    
     if (site && user) {
         updatePassword();
     }
@@ -454,19 +485,25 @@ function updateNonceIndicator() {
 function updatePassword() {
     const site = document.getElementById('genSite').value.trim();
     const user = document.getElementById('genUser').value.trim();
+    const strengthEl = document.getElementById('passwordStrength');
     
     if (!site || !user || !vault.privateKey) {
         document.getElementById('genPassword').textContent = '••••••••••••';
+        if (strengthEl) strengthEl.textContent = '';
         return;
     }
     
-    const pass = generatePassword(
-        vault.privateKey, user, site, currentNonce, 
-        vault.settings.hashLength || DEFAULT_HASH_LENGTH
-    );
+    const hl = vault.settings.hashLength || DEFAULT_HASH_LENGTH;
+    const pass = generatePassword(vault.privateKey, user, site, currentNonce, hl);
     
     if (passwordVisible) {
         document.getElementById('genPassword').textContent = pass;
+    }
+    
+    // Update strength indicator
+    if (strengthEl) {
+        const s = getPasswordStrength(hl);
+        strengthEl.innerHTML = `<span style="color:${s.color}">● ${s.label}</span> · ${s.bits}-bit · ${s.len} chars`;
     }
 }
 
@@ -656,7 +693,7 @@ function saveEncrypted() {
 }
 
 // ============================================
-// Export
+// Export & Import
 // ============================================
 function downloadData() {
     const data = { users: vault.users, settings: vault.settings };
@@ -670,6 +707,44 @@ function downloadData() {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     showToast('Downloaded!');
+}
+
+function triggerImport() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const data = JSON.parse(text);
+            if (!data.users || typeof data.users !== 'object') {
+                showToast('Invalid vault file');
+                return;
+            }
+            const siteCount = Object.values(data.users).reduce((n, u) => n + Object.keys(u).length, 0);
+            if (!confirm(`Import ${siteCount} site(s)? This will merge with your current vault.`)) return;
+            // Merge users
+            Object.entries(data.users).forEach(([user, sites]) => {
+                if (!vault.users[user]) vault.users[user] = {};
+                Object.entries(sites).forEach(([site, nonce]) => {
+                    // Only overwrite if imported nonce is higher (newer version)
+                    if (vault.users[user][site] === undefined || nonce > vault.users[user][site]) {
+                        vault.users[user][site] = nonce;
+                    }
+                });
+            });
+            if (data.settings) vault.settings = { ...vault.settings, ...data.settings };
+            renderSiteList();
+            backupToNostrSilent();
+            showToast(`Imported ${siteCount} site(s)!`);
+        } catch (err) {
+            console.error(err);
+            showToast('Failed to import file');
+        }
+    };
+    input.click();
 }
 
 // ============================================
@@ -1110,7 +1185,7 @@ function resetInactivityTimer() {
     // Only set timer if vault is unlocked (privateKey present)
     if (vault.privateKey) {
         inactivityTimer = setTimeout(() => {
-            lockVault();
+            lockVault(true);
         }, INACTIVITY_TIMEOUT_MS);
     }
 }
@@ -1131,10 +1206,35 @@ function setupInactivityListeners() {
             const elapsed = Date.now() - hiddenAt;
             hiddenAt = null;
             if (elapsed >= VISIBILITY_LOCK_MS) {
-                lockVault();
+                lockVault(true);
             } else {
                 resetInactivityTimer();
             }
+        }
+    });
+}
+
+// ============================================
+// Keyboard Shortcuts
+// ============================================
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        // Only active on generate screen
+        const genScreen = document.getElementById('generateScreen');
+        if (genScreen.classList.contains('hidden')) return;
+        
+        // Don't trigger if typing in an input
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        // Enter → copy password
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            copyPassword();
+        }
+        // Escape → back to site list
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            showScreen('mainScreen');
         }
     });
 }
@@ -1144,6 +1244,7 @@ function setupInactivityListeners() {
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
     setupInactivityListeners();
+    setupKeyboardShortcuts();
 
     // Check if there's saved encrypted data
     const stored = localStorage.getItem('vaultEncrypted');

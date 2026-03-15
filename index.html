@@ -6,6 +6,9 @@
     <meta name="theme-color" content="#0f0f0f">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <title>Vault</title>
     <style>
         * {
@@ -461,6 +464,13 @@
         .text-sm { font-size: 13px; }
 
         /* Nonce Control */
+        .password-strength {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            min-height: 16px;
+        }
+
         .nonce-control {
             display: flex;
             align-items: center;
@@ -685,9 +695,9 @@
             </button>
         </div>
         <div class="version-badge mt-24" style="justify-content: center;">
-            <span>v3.0</span>
+            <span>v3.1</span>
             <span>•</span>
-            <span>Offline Ready</span>
+            <span>Installable PWA</span>
         </div>
     </div>
 
@@ -813,6 +823,7 @@
         </div>
         <div class="password-display">
             <div class="password-value" id="genPassword">••••••••••••</div>
+            <div id="passwordStrength" class="password-strength"></div>
             <div class="nonce-control">
                 <button onclick="decrementNonce()">−</button>
                 <span class="nonce-value">Version <span id="nonceDisplay">1</span></span>
@@ -857,8 +868,8 @@
         </div>
         <div class="settings-item" onclick="showScreen('exportScreen')">
             <div>
-                <div class="settings-label">📤 Export Data</div>
-                <div class="settings-desc">Download your site list</div>
+                <div class="settings-label">📦 Export / Import</div>
+                <div class="settings-desc">Download or restore your site list</div>
             </div>
             <span>→</span>
         </div>
@@ -925,20 +936,25 @@
         </button>
     </div>
 
-    <!-- Screen: Export -->
+    <!-- Screen: Export / Import -->
     <div id="exportScreen" class="screen hidden">
         <div class="header">
             <div class="header-left">
                 <button class="btn btn-ghost btn-icon" onclick="showScreen('settingsScreen')">←</button>
-                <h2 style="margin:0">Export Data</h2>
+                <h2 style="margin:0">Export / Import</h2>
             </div>
         </div>
         <p class="text-muted text-sm mb-8">
-            Download your saved sites and password versions as a JSON file.
+            Export your vault as JSON or import a previously exported file.
         </p>
-        <button class="btn btn-primary" onclick="downloadData()">
-            📥 Download JSON
-        </button>
+        <div class="button-stack">
+            <button class="btn btn-primary" onclick="downloadData()">
+                📥 Export JSON
+            </button>
+            <button class="btn btn-secondary" onclick="triggerImport()">
+                📤 Import JSON
+            </button>
+        </div>
     </div>
 
     <!-- Screen: Advanced -->
@@ -1000,5 +1016,10 @@
     <script src="crypto-js.min.js"></script>
     <script src="lib/nostr-tools.min.js"></script>
     <script src="app.js"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      }
+    </script>
 </body>
 </html>
