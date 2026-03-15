@@ -294,47 +294,33 @@ async function checkForRemoteBackups() {
 }
 
 async function silentRestoreFromNostr() {
-    const { nip04, relayInit, getPublicKey } = window.NostrTools;
-    
     if (!vault.privateKey) return false;
     
-    const utf8 = new TextEncoder().encode(vault.privateKey);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
-    const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-    const pk = getPublicKey(sk);
+    const { sk, pk } = await getNostrKeyPair();
     
     let latest = null;
     
     for (const url of RELAYS) {
         try {
-            const relay = relayInit(url);
-            await new Promise((resolve, reject) => {
-                const t = setTimeout(() => reject('timeout'), 5000);
-                relay.on('connect', () => { clearTimeout(t); resolve(); });
-                relay.on('error', reject);
-                relay.connect();
-            });
+            const relay = await connectRelay(url);
             
-            const sub = relay.sub([{ kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"], limit: 1 }]);
-            
-            await new Promise(resolve => {
-                const t = setTimeout(() => { sub.unsub(); resolve(); }, 6000);
-                sub.on('event', e => {
-                    if (!latest || e.created_at > latest.created_at) latest = e;
-                });
-                sub.on('eose', () => { clearTimeout(t); sub.unsub(); resolve(); });
-            });
+            // Query both new (kind:30078) and legacy (kind:1) formats
+            const events = await subscribeAndCollect(relay, [
+                { kinds: [30078], authors: [pk], "#d": [BACKUP_D_TAG], limit: 1 },
+                { kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"], limit: 1 }
+            ], 6000);
             
             relay.close();
             
-            // If we found one, try to use it
-            if (latest) break;
+            for (const e of events) {
+                if (!latest || e.created_at > latest.created_at) latest = e;
+            }
         } catch (e) { console.error(url, e); }
     }
     
     if (latest) {
         try {
-            const decrypted = await nip04.decrypt(sk, latest.pubkey, latest.content);
+            const decrypted = await decryptBackupEvent(latest, sk, pk);
             const data = JSON.parse(decrypted);
             vault.users = { ...vault.users, ...data.users };
             if (data.settings) {
@@ -678,10 +664,46 @@ function copySeedPhrase() {
 }
 
 // ============================================
-// Nostr Backup (preserved & simplified from original)
+// Nostr Key Helpers
 // ============================================
+async function getNostrKeyPair() {
+    const { getPublicKey } = window.NostrTools;
+    const utf8 = new TextEncoder().encode(vault.privateKey);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
+    const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    const pk = getPublicKey(sk);
+    return { sk, pk };
+}
+
+async function connectRelay(url, timeoutMs = 5000) {
+    const { relayInit } = window.NostrTools;
+    const relay = relayInit(url);
+    await new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject('timeout'), timeoutMs);
+        relay.on('connect', () => { clearTimeout(t); resolve(); });
+        relay.on('error', reject);
+        relay.connect();
+    });
+    return relay;
+}
+
+function subscribeAndCollect(relay, filters, timeoutMs = 8000) {
+    return new Promise(resolve => {
+        const events = [];
+        const sub = relay.sub(filters);
+        const t = setTimeout(() => { sub.unsub(); resolve(events); }, timeoutMs);
+        sub.on('event', e => events.push(e));
+        sub.on('eose', () => { clearTimeout(t); sub.unsub(); resolve(events); });
+    });
+}
+
+// ============================================
+// Nostr Backup — NIP-44 + kind:30078 (with NIP-04 legacy fallback)
+// ============================================
+const BACKUP_D_TAG = 'vault-backup';
+
 async function backupToNostr(silent = false) {
-    const { nip04, relayInit, getEventHash, signEvent, getPublicKey } = window.NostrTools;
+    const { nip44, getEventHash, signEvent, getPublicKey } = window.NostrTools;
     
     if (!vault.privateKey) {
         if (!silent) showToast('Vault not initialized');
@@ -689,19 +711,19 @@ async function backupToNostr(silent = false) {
     }
     
     try {
-        const utf8 = new TextEncoder().encode(vault.privateKey);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
-        const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-        const pk = getPublicKey(sk);
+        const { sk, pk } = await getNostrKeyPair();
+        const sharedSecret = nip44.getSharedSecret(sk, pk);
         
         const data = JSON.stringify({ users: vault.users, settings: vault.settings });
-        const encrypted = await nip04.encrypt(sk, pk, data);
+        const encrypted = nip44.encrypt(sharedSecret, data);
         
+        // kind:30078 = parameterized replaceable event (app-specific data)
+        // "d" tag makes it replaceable — only latest version stored per relay
         const event = {
-            kind: 1,
+            kind: 30078,
             pubkey: pk,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [["t", "nostr-pwd-backup"]],
+            tags: [["d", BACKUP_D_TAG]],
             content: encrypted,
         };
         event.id = getEventHash(event);
@@ -711,13 +733,7 @@ async function backupToNostr(silent = false) {
         let successRelays = [];
         for (const url of RELAYS) {
             try {
-                const relay = relayInit(url);
-                await new Promise((resolve, reject) => {
-                    const t = setTimeout(() => reject('timeout'), 5000);
-                    relay.on('connect', () => { clearTimeout(t); resolve(); });
-                    relay.on('error', reject);
-                    relay.connect();
-                });
+                const relay = await connectRelay(url);
                 relay.publish(event);
                 relay.close();
                 success++;
@@ -728,7 +744,6 @@ async function backupToNostr(silent = false) {
         if (success > 0) {
             if (!silent) showToast(`Backed up to ${success} relays`);
             
-            // Debug: show nevent link
             if (debugMode) {
                 const nevent = encodeNevent(event.id, successRelays);
                 if (nevent) {
@@ -749,48 +764,53 @@ async function backupToNostr(silent = false) {
     }
 }
 
-async function restoreFromNostr() {
-    const { nip04, relayInit, getPublicKey } = window.NostrTools;
+/**
+ * Decrypt a backup event, auto-detecting NIP-44 (kind:30078) vs NIP-04 (legacy kind:1).
+ */
+async function decryptBackupEvent(event, sk, pk) {
+    const { nip44, nip04 } = window.NostrTools;
     
+    if (event.kind === 30078) {
+        // NIP-44 encryption
+        const sharedSecret = nip44.getSharedSecret(sk, pk);
+        return nip44.decrypt(sharedSecret, event.content);
+    } else {
+        // Legacy NIP-04 (kind:1 with nostr-pwd-backup tag)
+        return await nip04.decrypt(sk, event.pubkey, event.content);
+    }
+}
+
+async function restoreFromNostr() {
     if (!vault.privateKey) {
         showToast('Vault not initialized');
         return;
     }
     
     try {
-        const utf8 = new TextEncoder().encode(vault.privateKey);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
-        const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-        const pk = getPublicKey(sk);
+        const { sk, pk } = await getNostrKeyPair();
         
         let latest = null;
         
         for (const url of RELAYS) {
             try {
-                const relay = relayInit(url);
-                await new Promise((resolve, reject) => {
-                    const t = setTimeout(() => reject('timeout'), 5000);
-                    relay.on('connect', () => { clearTimeout(t); resolve(); });
-                    relay.on('error', reject);
-                    relay.connect();
-                });
+                const relay = await connectRelay(url);
                 
-                const sub = relay.sub([{ kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"] }]);
-                
-                await new Promise(resolve => {
-                    const t = setTimeout(() => { sub.unsub(); resolve(); }, 8000);
-                    sub.on('event', e => {
-                        if (!latest || e.created_at > latest.created_at) latest = e;
-                    });
-                    sub.on('eose', () => { clearTimeout(t); sub.unsub(); resolve(); });
-                });
+                // Query both new format (kind:30078) and legacy (kind:1 with tag)
+                const events = await subscribeAndCollect(relay, [
+                    { kinds: [30078], authors: [pk], "#d": [BACKUP_D_TAG], limit: 1 },
+                    { kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"], limit: 1 }
+                ]);
                 
                 relay.close();
+                
+                for (const e of events) {
+                    if (!latest || e.created_at > latest.created_at) latest = e;
+                }
             } catch (e) { console.error(url, e); }
         }
         
         if (latest) {
-            const decrypted = await nip04.decrypt(sk, latest.pubkey, latest.content);
+            const decrypted = await decryptBackupEvent(latest, sk, pk);
             const data = JSON.parse(decrypted);
             vault.users = { ...vault.users, ...data.users };
             if (data.settings) vault.settings = { ...vault.settings, ...data.settings };
@@ -806,8 +826,6 @@ async function restoreFromNostr() {
 }
 
 async function openNostrHistory() {
-    const { relayInit, getPublicKey } = window.NostrTools;
-    
     if (!vault.privateKey) {
         showToast('Vault not initialized');
         return;
@@ -818,37 +836,28 @@ async function openNostrHistory() {
     container.classList.remove('hidden');
     
     try {
-        const utf8 = new TextEncoder().encode(vault.privateKey);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
-        const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-        const pk = getPublicKey(sk);
+        const { sk, pk } = await getNostrKeyPair();
         
-        const events = [];
+        const allEvents = [];
         
         for (const url of RELAYS) {
             try {
-                const relay = relayInit(url);
-                await new Promise((resolve, reject) => {
-                    const t = setTimeout(() => reject('timeout'), 5000);
-                    relay.on('connect', () => { clearTimeout(t); resolve(); });
-                    relay.on('error', reject);
-                    relay.connect();
-                });
+                const relay = await connectRelay(url);
                 
-                const sub = relay.sub([{ kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"] }]);
-                
-                await new Promise(resolve => {
-                    const t = setTimeout(() => { sub.unsub(); resolve(); }, 8000);
-                    sub.on('event', e => events.push({ ...e, relay: url }));
-                    sub.on('eose', () => { clearTimeout(t); sub.unsub(); resolve(); });
-                });
+                // Fetch both new and legacy backup events
+                const events = await subscribeAndCollect(relay, [
+                    { kinds: [30078], authors: [pk], "#d": [BACKUP_D_TAG] },
+                    { kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"] }
+                ]);
                 
                 relay.close();
+                
+                events.forEach(e => allEvents.push({ ...e, relay: url }));
             } catch (e) { console.error(url, e); }
         }
         
         // Dedupe by id
-        const unique = [...new Map(events.map(e => [e.id, e])).values()]
+        const unique = [...new Map(allEvents.map(e => [e.id, e])).values()]
             .sort((a, b) => b.created_at - a.created_at);
         
         if (unique.length === 0) {
@@ -858,15 +867,16 @@ async function openNostrHistory() {
         
         container.innerHTML = `<h3 class="mb-8">${unique.length} backup(s)</h3>` + 
             unique.map(e => {
+                const kindLabel = e.kind === 30078 ? '🔒 NIP-44' : '⚠️ NIP-04 (legacy)';
                 const nevent = encodeNevent(e.id, [e.relay]);
                 const debugLink = debugMode && nevent 
                     ? `<a class="debug-link" href="https://njump.me/${nevent}" target="_blank" onclick="event.stopPropagation()">🔗 njump.me/${nevent.slice(0, 20)}...</a>` 
                     : '';
                 return `
-                <div class="site-item" onclick="restoreFromId('${e.id}')">
+                <div class="site-item" onclick="restoreFromId('${e.id}', ${e.kind})">
                     <div class="site-info">
                         <div class="site-name">${new Date(e.created_at * 1000).toLocaleString()}</div>
-                        <div class="site-user">${e.id.slice(0, 16)}...</div>
+                        <div class="site-user">${kindLabel} · ${e.id.slice(0, 16)}...</div>
                         ${debugLink}
                     </div>
                 </div>
@@ -877,41 +887,24 @@ async function openNostrHistory() {
     }
 }
 
-async function restoreFromId(eventId) {
-    const { nip04, relayInit, getPublicKey } = window.NostrTools;
-    
+async function restoreFromId(eventId, eventKind) {
     try {
-        const utf8 = new TextEncoder().encode(vault.privateKey);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
-        const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+        const { sk, pk } = await getNostrKeyPair();
         
         let found = null;
         
         for (const url of RELAYS) {
             if (found) break;
             try {
-                const relay = relayInit(url);
-                await new Promise((resolve, reject) => {
-                    const t = setTimeout(() => reject('timeout'), 5000);
-                    relay.on('connect', () => { clearTimeout(t); resolve(); });
-                    relay.on('error', reject);
-                    relay.connect();
-                });
-                
-                const sub = relay.sub([{ ids: [eventId] }]);
-                
-                await new Promise(resolve => {
-                    const t = setTimeout(() => { sub.unsub(); resolve(); }, 5000);
-                    sub.on('event', e => { found = e; clearTimeout(t); sub.unsub(); resolve(); });
-                    sub.on('eose', () => { clearTimeout(t); sub.unsub(); resolve(); });
-                });
-                
+                const relay = await connectRelay(url);
+                const events = await subscribeAndCollect(relay, [{ ids: [eventId] }], 5000);
                 relay.close();
+                if (events.length > 0) found = events[0];
             } catch (e) { console.error(url, e); }
         }
         
         if (found) {
-            const decrypted = await nip04.decrypt(sk, found.pubkey, found.content);
+            const decrypted = await decryptBackupEvent(found, sk, pk);
             const data = JSON.parse(decrypted);
             vault.users = data.users || vault.users;
             if (data.settings) vault.settings = { ...vault.settings, ...data.settings };
