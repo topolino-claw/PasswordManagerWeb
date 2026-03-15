@@ -20,8 +20,14 @@ let passwordVisible = false;
 let navigationStack = ['welcomeScreen'];
 let debugMode = false;
 let inactivityTimer = null;
+let unlockAttempts = 0;
+let unlockLockoutUntil = 0;
+let clipboardClearTimer = null;
 
 const INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const VISIBILITY_LOCK_MS = 2 * 60 * 1000; // 2 minutes hidden = lock
+const MAX_UNLOCK_ATTEMPTS = 5;
+const UNLOCK_LOCKOUT_MS = 30 * 1000; // 30 seconds
 const DEFAULT_HASH_LENGTH = 16;
 
 const RELAYS = [
@@ -340,6 +346,9 @@ async function silentRestoreFromNostr() {
 function lockVault() {
     if (inactivityTimer) clearTimeout(inactivityTimer);
     inactivityTimer = null;
+    if (clipboardClearTimer) clearTimeout(clipboardClearTimer);
+    clipboardClearTimer = null;
+    navigator.clipboard.writeText('').catch(() => {});
     vault = { privateKey: '', seedPhrase: '', users: {}, settings: { hashLength: 16 } };
     nostrKeys = { nsec: '', npub: '' };
     navigationStack = ['welcomeScreen'];
@@ -377,12 +386,13 @@ function renderSiteList() {
     
     emptyState.classList.add('hidden');
     container.innerHTML = filtered.map(s => `
-        <div class="site-item" onclick="openSite('${escapeHtml(s.site)}', '${escapeHtml(s.user)}', ${s.nonce})">
-            <div class="site-icon">${s.site.charAt(0)}</div>
+        <div class="site-item" onclick="openSite('${escapeJsString(s.site)}', '${escapeJsString(s.user)}', ${s.nonce})">
+            <div class="site-icon">${escapeHtml(s.site.charAt(0))}</div>
             <div class="site-info">
                 <div class="site-name">${escapeHtml(s.site)}</div>
                 <div class="site-user">${escapeHtml(s.user)}</div>
             </div>
+            <button class="btn-delete" onclick="event.stopPropagation(); deleteSite('${escapeJsString(s.site)}', '${escapeJsString(s.user)}')" title="Delete">✕</button>
         </div>
     `).join('');
 }
@@ -404,6 +414,11 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+/** Escape a string for safe use inside a JS string literal in an HTML attribute (onclick, etc.) */
+function escapeJsString(str) {
+    return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
 // ============================================
@@ -504,6 +519,11 @@ function copyPassword() {
     
     navigator.clipboard.writeText(pass).then(() => {
         showToast('Saved & copied!');
+        // Auto-clear clipboard after 30 seconds
+        if (clipboardClearTimer) clearTimeout(clipboardClearTimer);
+        clipboardClearTimer = setTimeout(() => {
+            navigator.clipboard.writeText('').catch(() => {});
+        }, 30000);
     }).catch(() => {
         showToast('Copy failed');
     });
@@ -517,6 +537,22 @@ function saveAndCopy() {
     showScreen('mainScreen');
 }
 
+function deleteSite(site, user) {
+    if (!confirm(`Delete ${site} (${user})?`)) return;
+    
+    if (vault.users[user]) {
+        delete vault.users[user][site];
+        // Clean up empty user objects
+        if (Object.keys(vault.users[user]).length === 0) {
+            delete vault.users[user];
+        }
+    }
+    
+    showToast('Site deleted');
+    renderSiteList();
+    backupToNostrSilent();
+}
+
 function backupToNostrSilent() {
     backupToNostr(true).catch(e => console.error('Silent backup failed:', e));
 }
@@ -525,6 +561,14 @@ function backupToNostrSilent() {
 // Local Encryption
 // ============================================
 async function unlockVault() {
+    // Rate limiting
+    const now = Date.now();
+    if (now < unlockLockoutUntil) {
+        const secs = Math.ceil((unlockLockoutUntil - now) / 1000);
+        showToast(`Too many attempts. Wait ${secs}s`);
+        return;
+    }
+    
     const password = document.getElementById('unlockPassword').value;
     if (!password) {
         showToast('Enter password');
@@ -540,7 +584,14 @@ async function unlockVault() {
         const encrypted = stored[key];
         
         if (!encrypted) {
-            showToast('No vault found for this password');
+            unlockAttempts++;
+            if (unlockAttempts >= MAX_UNLOCK_ATTEMPTS) {
+                unlockLockoutUntil = Date.now() + UNLOCK_LOCKOUT_MS;
+                unlockAttempts = 0;
+                showToast(`Too many attempts. Locked for 30s`);
+            } else {
+                showToast(`Wrong password (${MAX_UNLOCK_ATTEMPTS - unlockAttempts} attempts left)`);
+            }
             return;
         }
         
@@ -558,13 +609,21 @@ async function unlockVault() {
         }
         
         nostrKeys = await deriveNostrKeys(vault.privateKey);
+        unlockAttempts = 0;
         
         resetInactivityTimer();
         showToast('Vault unlocked!');
         showScreen('mainScreen');
     } catch (e) {
         console.error(e);
-        showToast('Invalid password');
+        unlockAttempts++;
+        if (unlockAttempts >= MAX_UNLOCK_ATTEMPTS) {
+            unlockLockoutUntil = Date.now() + UNLOCK_LOCKOUT_MS;
+            unlockAttempts = 0;
+            showToast(`Too many attempts. Locked for 30s`);
+        } else {
+            showToast('Invalid password');
+        }
     }
 }
 
@@ -1052,15 +1111,31 @@ function resetInactivityTimer() {
     if (vault.privateKey) {
         inactivityTimer = setTimeout(() => {
             lockVault();
-            location.reload();
         }, INACTIVITY_TIMEOUT_MS);
     }
 }
+
+let hiddenAt = null;
 
 function setupInactivityListeners() {
     const events = ['click', 'keydown', 'touchstart', 'scroll', 'mousemove'];
     events.forEach(evt => {
         document.addEventListener(evt, resetInactivityTimer, { passive: true });
+    });
+    
+    // Lock vault when tab is hidden for too long
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            hiddenAt = Date.now();
+        } else if (hiddenAt && vault.privateKey) {
+            const elapsed = Date.now() - hiddenAt;
+            hiddenAt = null;
+            if (elapsed >= VISIBILITY_LOCK_MS) {
+                lockVault();
+            } else {
+                resetInactivityTimer();
+            }
+        }
     });
 }
 

@@ -259,6 +259,27 @@
             background: var(--surface-hover);
         }
 
+        .btn-delete {
+            width: 32px;
+            height: 32px;
+            border: none;
+            border-radius: 50%;
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: all 0.2s;
+        }
+
+        .btn-delete:hover, .btn-delete:active {
+            background: var(--danger);
+            color: white;
+        }
+
         .site-icon {
             width: 40px;
             height: 40px;
