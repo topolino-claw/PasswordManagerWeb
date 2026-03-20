@@ -75,7 +75,7 @@ function showScreen(screenId, isBackNavigation = false) {
         document.getElementById("verificationResult").textContent = "";
     }
 
-    console.log("Navigation History:", navigationHistory);
+
 }
 
 /**
@@ -157,7 +157,7 @@ async function verifyBip39SeedPhrase(seedPhrase, wordlist) {
     const wordCount = words.length;
 
     // Log the words for debugging
-    console.log('Words:', words);
+
 
     // Validate word count (12, 15, 18, 21, 24 are the only valid lengths)
     if (![12, 15, 18, 21, 24].includes(wordCount)) {
@@ -208,7 +208,7 @@ async function verifyBip39SeedPhrase(seedPhrase, wordlist) {
     }
 
     // If all checks pass, the seed phrase is valid
-    console.log('Seed phrase is valid.');
+
     return true;
 }
 /**
@@ -284,12 +284,9 @@ async function showPassword() {
     const storedNonce = nonces[siteField.value];
     const nonceValue = parseInt(nonceField.value, 10) || 0;
     if (storedNonce !== undefined) {
-        console.log(`Loaded nonce for site: ${siteField.value} = ${storedNonce}`);
     } else {
-        console.log(`Initialized nonce for site: ${siteField.value} with ui value ${nonceValue}`);
     }
 
-    console.log(localStoredData);
 
     /*
     prepare all the verification processes to ensure proper data input
@@ -450,8 +447,10 @@ function decrementSiteNonce() {
  */
 function getRandomIndices(max, count) {
     const indices = new Set();
+    const arr = new Uint32Array(1);
     while (indices.size < count) {
-        indices.add(Math.floor(Math.random() * max));
+        crypto.getRandomValues(arr);
+        indices.add(arr[0] % max);
     }
     return Array.from(indices);
 }
@@ -582,14 +581,29 @@ function loadDictionary(key) {
 function saveDictionary(key, dictionary) {
     // Convert the dictionary to a JSON string and save it in localStorage
     localStorage.setItem(key, JSON.stringify(dictionary));
-    console.log('Dict Saved')
 }
 
 /**
  * Load and decrypt data from localStorage using a user-provided password.
  * @returns {Object|void} Decrypted data object or void on failure.
  */
-function loadEncryptedData() {
+
+/**
+ * Derive Nostr keys from a hex private key string.
+ * @param {string} hexKey - The hex-encoded private key.
+ * @returns {{nsec: string, npub: string}} Nostr key pair (nsec + npub).
+ */
+async function deriveNostrKeys(hexKey) {
+    const utf8 = new TextEncoder().encode(hexKey);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", utf8);
+    const nostrHex = Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+    const nsec = nip19.nsecEncode(nostrHex);
+    const npub = getPublicKey(nostrHex);
+    return { nsec, npub };
+}
+
+async function loadEncryptedData() {
     const passwordInput = document.getElementById('encryptionPassword');
     const password = passwordInput.value.trim();
     if (!password || !passwordInput) {
@@ -612,7 +626,6 @@ function loadEncryptedData() {
             return;
         }
 
-        console.log('Encrypted data:', encryptedData);
 
         // Decrypt the data using the raw password
         const decryptedBytes = CryptoJS.AES.decrypt(encryptedData, password);
@@ -622,14 +635,13 @@ function loadEncryptedData() {
             throw new Error('Failed to decrypt data. Possibly malformed UTF-8.');
         }
 
-        console.log('Decrypted data:', decryptedData);
         localStoredData = JSON.parse(decryptedData)
         if(!localStoredData["privateKey"]){
             alert("There is no private key in the decrypted storage.")
             return;
         }
         privateKeyField.value = localStoredData["privateKey"]
-        nostrKeys = deriveNostrKeys(privateKeyField.value);
+        nostrKeys = await deriveNostrKeys(privateKeyField.value);
         localStoredStatus = "loaded"
         loadSettings();
         alert('Data loaded successfully.');
@@ -676,8 +688,6 @@ function saveEncryptedData() {
     const existingData = loadDictionary("encryptedDataStorage") || {};
     existingData[key] = encrypted; // Save the encrypted data using the hashed password as the key
     saveDictionary("encryptedDataStorage", existingData); // Save back to localStorage
-    console.log('Data saved with hashed key:', key);
-    console.log('Data:', existingData[key]);
     alert("Data encrypted succesfully")
     refreshPage()
 }
@@ -741,7 +751,6 @@ function downloadNoncesJson() {
 window.backupToNostr = async function () {
     const { nip04, relayInit, getEventHash, signEvent, getPublicKey } = window.NostrTools;
 
-    console.log("📦 Starting NOSTR backup...");
 
     const entropy = privateKeyField.value.trim();
     if (!entropy) return alert("Missing private key");
@@ -755,7 +764,6 @@ window.backupToNostr = async function () {
             "wss://relay.snort.social",
             "wss://nos.lol"
         ];
-        console.log("🔧 Initialized default relay list");
     }
 
     try {
@@ -766,26 +774,23 @@ window.backupToNostr = async function () {
 
         const data = JSON.stringify(localStoredData);
         const encrypted = await nip04.encrypt(sk, pk, data);
-        console.log("🔐 Data encrypted successfully");
 
         const event = {
-            kind: 1,
+            kind: 30078,
             pubkey: pk,
             created_at: Math.floor(Date.now() / 1000),
-            tags: [["t", "nostr-pwd-backup"]],
+            tags: [["d", "vault-backup"]],
             content: encrypted,
         };
 
         event.id = getEventHash(event);
         event.sig = await signEvent(event, sk);
-        console.log("📤 Event prepared for publishing");
 
         let successCount = 0;
         const totalRelays = window.relayList.length;
 
         const publishPromises = window.relayList.map(async (url) => {
             try {
-                console.log(`🌐 Connecting to ${url}`);
                 const relay = relayInit(url);
 
                 await new Promise((resolve, reject) => {
@@ -816,27 +821,23 @@ window.backupToNostr = async function () {
 
                             publishResult.on("ok", () => {
                                 clearTimeout(timeout);
-                                console.log(`✅ Successfully published to ${url}`);
                                 successCount++;
                                 resolve();
                             });
 
                             publishResult.on("failed", (reason) => {
                                 clearTimeout(timeout);
-                                console.warn(`❌ Failed to publish to ${url}:`, reason);
                                 reject(new Error(reason));
                             });
                         });
                     } else {
                         // Older version - just assume success if no error thrown
-                        console.log(`✅ Published to ${url} (legacy mode)`);
                         successCount++;
                     }
                 } catch (publishError) {
                     // Try alternative publish method for older versions
                     try {
                         await relay.send(['EVENT', event]);
-                        console.log(`✅ Published to ${url} (send method)`);
                         successCount++;
                     } catch (sendError) {
                         throw new Error(`Both publish methods failed: ${publishError.message}, ${sendError.message}`);
@@ -873,7 +874,6 @@ window.restoreFromNostr = async function () {
     if (window.restoreInProgress) return alert("Restore already in progress");
     window.restoreInProgress = true;
 
-    console.log("🔄 Starting restore from NOSTR...");
 
     const entropy = privateKeyField.value.trim();
     if (!entropy) {
@@ -890,7 +890,6 @@ window.restoreFromNostr = async function () {
             "wss://relay.snort.social",
             "wss://nos.lol"
         ];
-        console.log("🔧 Initialized default relay list");
     }
 
     try {
@@ -898,14 +897,12 @@ window.restoreFromNostr = async function () {
         const hashBuffer = await crypto.subtle.digest("SHA-256", utf8);
         const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
         const pk = getPublicKey(sk);
-        console.log("🔑 Using pubkey:", pk);
 
         let found = false;
         let latestEvent = null;
 
         const searchPromises = window.relayList.map(async (url) => {
             try {
-                console.log(`🌐 Connecting to ${url}`);
                 const relay = relayInit(url);
 
                 await new Promise((resolve, reject) => {
@@ -924,10 +921,12 @@ window.restoreFromNostr = async function () {
                     relay.connect();
                 });
 
-                const filter = { kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"] };
-                console.log(`🛰️ Subscribing with filter:`, filter);
+                const filter = [
+                    { kinds: [30078], authors: [pk], "#d": ["vault-backup"], limit: 1 },
+                    { kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"], limit: 1 }
+                ];
 
-                const sub = relay.sub([filter]);
+                const sub = relay.sub(filter);
 
                 await new Promise((resolve) => {
                     const timeout = setTimeout(() => {
@@ -936,7 +935,6 @@ window.restoreFromNostr = async function () {
                     }, 10000);
 
                     sub.on("event", async (e) => {
-                        console.log("📨 Got event:", e.id);
 
                         // Keep track of the latest event
                         if (!latestEvent || e.created_at > latestEvent.created_at) {
@@ -963,12 +961,15 @@ window.restoreFromNostr = async function () {
         if (found && latestEvent) {
             try {
                 const decrypted = await nip04.decrypt(sk, latestEvent.pubkey, latestEvent.content);
-                console.log("🔓 Successfully decrypted data");
 
                 const parsedData = JSON.parse(decrypted);
                 localStoredData = parsedData;
                 localStoredStatus = "loaded";
                 loadSettings();
+                if (localStoredData["privateKey"]) {
+                    privateKeyField.value = localStoredData["privateKey"];
+                    nostrKeys = await deriveNostrKeys(privateKeyField.value);
+                }
 
                 alert("✅ Restore complete from NOSTR");
                 showScreen("managementScreen");
@@ -995,7 +996,6 @@ window.restoreFromNostr = async function () {
 window.openNostrHistory = async function () {
     const { relayInit, getPublicKey } = window.NostrTools;
 
-    console.log("📖 Fetching backup history...");
 
     const entropy = privateKeyField.value.trim();
     if (!entropy) return alert("Missing private key");
@@ -1008,7 +1008,6 @@ window.openNostrHistory = async function () {
             "wss://relay.snort.social",
             "wss://nos.lol"
         ];
-        console.log("🔧 Initialized default relay list");
     }
 
     try {
@@ -1029,7 +1028,6 @@ window.openNostrHistory = async function () {
 
         const historyPromises = window.relayList.map(async (url) => {
             try {
-                console.log(`🌐 Connecting to ${url}`);
                 const relay = relayInit(url);
 
                 await new Promise((resolve, reject) => {
@@ -1048,7 +1046,10 @@ window.openNostrHistory = async function () {
                     relay.connect();
                 });
 
-                const sub = relay.sub([{ kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"] }]);
+                const sub = relay.sub([
+                        { kinds: [30078], authors: [pk], "#d": ["vault-backup"] },
+                        { kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"] }
+                    ]);
 
                 await new Promise((resolve) => {
                     const timeout = setTimeout(() => {
@@ -1058,7 +1059,6 @@ window.openNostrHistory = async function () {
 
                     sub.on("event", (e) => {
                         const date = new Date(e.created_at * 1000).toLocaleString();
-                        console.log(`🕓 Backup from ${url} on ${date}`);
                         allResults.push({
                             date: date,
                             timestamp: e.created_at,
@@ -1105,11 +1105,17 @@ window.openNostrHistory = async function () {
                 el.style.borderRadius = "5px";
                 el.style.cursor = "pointer";
                 el.title = "Tap to restore this backup";
-                el.innerHTML = `
-                    <strong>📦 ${result.date}</strong><br>
-                    <small>Relay: ${result.relay}</small><br>
-                    <small>ID: ${result.id.substring(0, 16)}...</small>
-                `;
+                const strong = document.createElement("strong");
+                strong.textContent = "📦 " + result.date;
+                const relaySmall = document.createElement("small");
+                relaySmall.textContent = "Relay: " + result.relay;
+                const idSmall = document.createElement("small");
+                idSmall.textContent = "ID: " + result.id.substring(0, 16) + "...";
+                el.appendChild(strong);
+                el.appendChild(document.createElement("br"));
+                el.appendChild(relaySmall);
+                el.appendChild(document.createElement("br"));
+                el.appendChild(idSmall);
                 el.addEventListener("click", () => {
                     if (typeof window.restoreFromNostrId === "function") {
                         window.restoreFromNostrId(result.id);
@@ -1160,7 +1166,6 @@ window.restoreFromNostrId = async function (eventId) {
             "wss://relay.snort.social",
             "wss://nos.lol"
         ];
-        console.log("🔧 Initialized default relay list");
     }
 
     try {
@@ -1227,6 +1232,10 @@ window.restoreFromNostrId = async function (eventId) {
                 localStoredData = parsedData;
                 localStoredStatus = "loaded";
                 loadSettings();
+                if (localStoredData["privateKey"]) {
+                    privateKeyField.value = localStoredData["privateKey"];
+                    nostrKeys = await deriveNostrKeys(privateKeyField.value);
+                }
 
                 alert("✅ Restore complete from NOSTR");
                 showScreen("managementScreen");
