@@ -243,9 +243,16 @@ function confirmSeedBackup() {
         div.className = 'input-group';
         div.innerHTML = `
             <label>Word #${i + 1}</label>
-            <input type="text" class="verify-word" data-index="${i}" placeholder="Enter word ${i + 1}" onkeydown="if(event.key==='Enter')verifySeedBackup()">
+            <input type="text" class="verify-word" data-index="${i}" placeholder="Enter word ${i + 1}">
         `;
         container.appendChild(div);
+    });
+    
+    // Bind Enter key on dynamically created verify inputs
+    container.querySelectorAll('.verify-word').forEach(input => {
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') verifySeedBackup();
+        });
     });
     
     showScreen('verifySeedScreen');
@@ -410,13 +417,13 @@ function renderSiteList() {
     
     emptyState.classList.add('hidden');
     container.innerHTML = filtered.map(s => `
-        <div class="site-item" onclick="openSite('${escapeJsString(s.site)}', '${escapeJsString(s.user)}', ${s.nonce})">
+        <div class="site-item" data-site="${escapeHtml(s.site)}" data-user="${escapeHtml(s.user)}" data-nonce="${s.nonce}">
             <div class="site-icon">${escapeHtml(s.site.charAt(0))}</div>
             <div class="site-info">
                 <div class="site-name">${escapeHtml(s.site)}</div>
                 <div class="site-user">${escapeHtml(s.user)}</div>
             </div>
-            <button class="btn-delete" onclick="event.stopPropagation(); deleteSite('${escapeJsString(s.site)}', '${escapeJsString(s.user)}')" title="Delete">✕</button>
+            <button class="btn-delete" data-delete-site="${escapeHtml(s.site)}" data-delete-user="${escapeHtml(s.user)}" title="Delete">✕</button>
         </div>
     `).join('');
 }
@@ -1004,10 +1011,10 @@ async function openNostrHistory() {
                 const kindLabel = e.kind === 30078 ? '🔒 NIP-44' : '⚠️ NIP-04 (legacy)';
                 const nevent = encodeNevent(e.id, [e.relay]);
                 const debugLink = debugMode && nevent 
-                    ? `<a class="debug-link" href="https://njump.me/${nevent}" target="_blank" onclick="event.stopPropagation()">🔗 njump.me/${nevent.slice(0, 20)}...</a>` 
+                    ? `<a class="debug-link" href="https://njump.me/${nevent}" target="_blank" data-debug-link="true">🔗 njump.me/${nevent.slice(0, 20)}...</a>` 
                     : '';
                 return `
-                <div class="site-item" onclick="restoreFromId('${e.id}', ${e.kind})">
+                <div class="site-item" data-restore-id="${e.id}" data-restore-kind="${e.kind}">
                     <div class="site-info">
                         <div class="site-name">${new Date(e.created_at * 1000).toLocaleString()}</div>
                         <div class="site-user">${kindLabel} · ${e.id.slice(0, 16)}...</div>
@@ -1015,6 +1022,15 @@ async function openNostrHistory() {
                     </div>
                 </div>
             `}).join('');
+        
+        // Bind event delegation for history items
+        container.querySelectorAll('[data-restore-id]').forEach(item => {
+            item.addEventListener('click', (e) => {
+                // Don't trigger restore when clicking debug links
+                if (e.target.closest('[data-debug-link]')) return;
+                restoreFromId(item.dataset.restoreId, parseInt(item.dataset.restoreKind));
+            });
+        });
     } catch (e) {
         console.error(e);
         container.innerHTML = '<p class="text-muted">Error loading history</p>';
@@ -1109,10 +1125,15 @@ function renderSuggestions(typed) {
         const matchPart = word.slice(0, typed.length);
         const restPart = word.slice(typed.length);
         return `<div class="seed-suggestion ${i === activeSuggestionIndex ? 'active' : ''}" 
-                     onclick="selectSuggestion('${word}')">
+                     data-suggestion="${word}">
             <span class="seed-suggestion-match">${matchPart}</span>${restPart}
         </div>`;
     }).join('');
+    
+    // Bind click events on suggestions
+    suggestions.querySelectorAll('[data-suggestion]').forEach(el => {
+        el.addEventListener('click', () => selectSuggestion(el.dataset.suggestion));
+    });
 }
 
 function onSeedKeydown(event) {
@@ -1245,6 +1266,132 @@ function setupKeyboardShortcuts() {
 document.addEventListener('DOMContentLoaded', () => {
     setupInactivityListeners();
     setupKeyboardShortcuts();
+
+    // ── Delegated screen navigation ──
+    document.addEventListener('click', (e) => {
+        const screenEl = e.target.closest('[data-screen]');
+        if (screenEl) {
+            showScreen(screenEl.dataset.screen);
+            return;
+        }
+        const backEl = e.target.closest('[data-action="back"]');
+        if (backEl) {
+            goBack();
+            return;
+        }
+        const seedPhraseEl = e.target.closest('[data-action="showSeedPhrase"]');
+        if (seedPhraseEl) {
+            showSeedPhrase();
+            return;
+        }
+    });
+
+    // ── Delegated site list events ──
+    document.getElementById('siteList').addEventListener('click', (e) => {
+        const deleteBtn = e.target.closest('.btn-delete[data-delete-site]');
+        if (deleteBtn) {
+            e.stopPropagation();
+            deleteSite(deleteBtn.dataset.deleteSite, deleteBtn.dataset.deleteUser);
+            return;
+        }
+        const siteItem = e.target.closest('.site-item[data-site]');
+        if (siteItem) {
+            openSite(siteItem.dataset.site, siteItem.dataset.user, parseInt(siteItem.dataset.nonce));
+        }
+    });
+
+    // ── Individual button bindings ──
+    const btnBindings = {
+        btnGenerateNewSeed: () => generateNewSeed(),
+        btnConfirmSeedBackup: () => confirmSeedBackup(),
+        btnVerifySeedBackup: () => verifySeedBackup(),
+        btnRestoreFromSeed: () => restoreFromSeed(),
+        btnUnlockVault: () => unlockVault(),
+        btnLockVault: () => lockVault(),
+        btnDecrementNonce: () => decrementNonce(),
+        btnIncrementNonce: () => incrementNonce(),
+        btnToggleVisibility: () => togglePasswordVisibility(),
+        btnCopyPassword: () => copyPassword(),
+        btnSaveAndCopy: () => saveAndCopy(),
+        btnBackupToNostr: () => backupToNostr(),
+        btnRestoreFromNostr: () => restoreFromNostr(),
+        btnOpenNostrHistory: () => openNostrHistory(),
+        btnSaveEncrypted: () => saveEncrypted(),
+        btnDownloadData: () => downloadData(),
+        btnTriggerImport: () => triggerImport(),
+        btnSaveAdvancedSettings: () => saveAdvancedSettings(),
+        btnCopySeedPhrase: () => copySeedPhrase(),
+    };
+
+    Object.entries(btnBindings).forEach(([id, handler]) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('click', handler);
+    });
+
+    // ── Input event listeners ──
+    const restoreSeedInput = document.getElementById('restoreSeedInput');
+    if (restoreSeedInput) {
+        restoreSeedInput.addEventListener('input', (e) => onSeedInput(e));
+        restoreSeedInput.addEventListener('keydown', (e) => onSeedKeydown(e));
+    }
+
+    const unlockPassword = document.getElementById('unlockPassword');
+    if (unlockPassword) {
+        unlockPassword.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') unlockVault();
+        });
+    }
+
+    const siteSearch = document.getElementById('siteSearch');
+    if (siteSearch) {
+        siteSearch.addEventListener('input', () => filterSites());
+        siteSearch.addEventListener('keydown', (e) => handleSearchEnter(e));
+    }
+
+    const genSite = document.getElementById('genSite');
+    if (genSite) {
+        genSite.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('genUser').focus();
+        });
+    }
+
+    const genUser = document.getElementById('genUser');
+    if (genUser) {
+        genUser.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') saveAndCopy();
+        });
+    }
+
+    const encryptPass1 = document.getElementById('encryptPass1');
+    if (encryptPass1) {
+        encryptPass1.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('encryptPass2').focus();
+        });
+    }
+
+    const encryptPass2 = document.getElementById('encryptPass2');
+    if (encryptPass2) {
+        encryptPass2.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') saveEncrypted();
+        });
+    }
+
+    const hashLengthSetting = document.getElementById('hashLengthSetting');
+    if (hashLengthSetting) {
+        hashLengthSetting.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') saveAdvancedSettings();
+        });
+    }
+
+    const debugModeToggle = document.getElementById('debugModeToggle');
+    if (debugModeToggle) {
+        debugModeToggle.addEventListener('change', () => toggleDebugMode());
+    }
+
+    // ── Service worker registration ──
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
 
     // Check if there's saved encrypted data
     const stored = localStorage.getItem('vaultEncrypted');
