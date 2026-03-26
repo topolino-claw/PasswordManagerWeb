@@ -676,6 +676,26 @@
         </div>
     </div>
 
+    <!-- Backup Password Modal -->
+    <div id="backupPasswordModal" class="modal hidden">
+        <div class="modal-content" style="width: 100%; max-width: 380px; padding: 24px;">
+            <h2 id="bpModalTitle" style="margin-bottom: 8px;">Set Backup Password</h2>
+            <p id="bpModalDesc" class="text-muted text-sm" style="margin-bottom: 20px; text-align: left;">
+                This password adds a second layer of encryption to your cloud backup. It is never stored anywhere — remember it or your backup is unrecoverable.
+            </p>
+            <div class="input-group">
+                <input type="password" id="bpPass1" placeholder="Backup password" autocomplete="off">
+            </div>
+            <div class="input-group" id="bpPass2Group">
+                <input type="password" id="bpPass2" placeholder="Confirm password" autocomplete="off">
+            </div>
+            <div class="button-stack" style="margin-top: 16px;">
+                <button class="btn btn-primary" id="bpModalConfirm">Set Password & Backup</button>
+                <button class="btn btn-ghost" id="bpModalCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Screen: Welcome -->
     <div id="welcomeScreen" class="screen">
         <div class="spacer"></div>
@@ -697,7 +717,7 @@
             </button>
         </div>
         <div class="version-badge mt-24" style="justify-content: center;">
-            <span>v3.1</span>
+            <span>v3.2</span>
             <span>•</span>
             <span>Installable PWA</span>
         </div>
@@ -897,14 +917,20 @@
             </div>
         </div>
         <p class="text-muted text-sm mb-8">
-            Backup your site list to decentralized Nostr relays. Your data is encrypted with your seed phrase.
+            Backup your site list to decentralized Nostr relays. Your data is double-encrypted: first with your backup password, then with your Nostr key.
         </p>
+        <div id="backupPasswordStatus" class="version-badge mb-8" style="justify-content: center;">
+            <span>🔒 Backup password: not set</span>
+        </div>
         <div class="button-stack">
             <button class="btn btn-primary" id="btnBackupToNostr">
                 ☁️ Backup Now
             </button>
             <button class="btn btn-secondary" id="btnRestoreFromNostr">
                 📥 Restore from Cloud
+            </button>
+            <button class="btn btn-secondary" id="btnChangeBackupPassword">
+                🔑 Change Backup Password
             </button>
             <button class="btn btn-ghost" id="btnOpenNostrHistory">
                 📜 View Backup History

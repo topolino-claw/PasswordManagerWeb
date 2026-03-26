@@ -89,6 +89,14 @@ function showScreen(screenId) {
         renderSiteList();
     } else if (screenId === 'newWalletScreen') {
         generateNewSeed(true);
+    } else if (screenId === 'backupScreen') {
+        const statusEl = document.getElementById('backupPasswordStatus');
+        if (statusEl) {
+            const hasPassword = vault.settings.hasBackupPassword || false;
+            statusEl.innerHTML = hasPassword
+                ? '<span>🔒 Backup password: ✅ set</span>'
+                : '<span>🔒 Backup password: not set</span>';
+        }
     } else if (screenId === 'advancedScreen') {
         document.getElementById('hashLengthSetting').value = vault.settings.hashLength || 16;
         debugMode = vault.settings.debugMode || false;
@@ -593,18 +601,35 @@ async function silentRestoreFromNostr() {
 
     if (latest) {
         try {
-            const decrypted = await decryptBackupEvent(latest, sk, pk);
+            // Try non-interactive first (use cached password if available)
+            const decrypted = await decryptBackupEvent(latest, sk, pk, false);
             const data = JSON.parse(decrypted);
             vault.users = { ...vault.users, ...data.users };
             if (data.settings) {
                 vault.settings = { ...vault.settings, ...data.settings };
                 debugMode = vault.settings.debugMode || false;
             }
-            // Persist the freshly restored data to local backup
             saveLocalNonceBackup();
             return true;
         } catch (e) {
-            // Decrypt failure may expose content context — use debugLog
+            // If it's a double-encrypted backup and we don't have the password,
+            // try interactively (prompt the user)
+            if (e.message && e.message.includes('password')) {
+                try {
+                    const decrypted = await decryptBackupEvent(latest, sk, pk, true);
+                    const data = JSON.parse(decrypted);
+                    vault.users = { ...vault.users, ...data.users };
+                    if (data.settings) {
+                        vault.settings = { ...vault.settings, ...data.settings };
+                        debugMode = vault.settings.debugMode || false;
+                    }
+                    saveLocalNonceBackup();
+                    return true;
+                } catch (e2) {
+                    debugLog('silentRestoreFromNostr: interactive decrypt failed:', e2);
+                    return false;
+                }
+            }
             debugLog('silentRestoreFromNostr: decrypt failed:', e);
             return false;
         }
@@ -631,6 +656,7 @@ function lockVault(skipConfirm = false) {
     // Wipe all sensitive data from memory
     vault = { privateKey: '', seedPhrase: '', users: {}, settings: { hashLength: 16 } };
     nostrKeys = { nsec: '', npub: '' };
+    _sessionBackupPassword = null;
     navigationStack = ['welcomeScreen'];
     showScreen('welcomeScreen');
     showToast('Vault locked');
@@ -1292,6 +1318,181 @@ function subscribeAndCollect(relay, filters, timeoutMs = 8000) {
 }
 
 // ============================================
+// Double-Encrypted Backup — Layer 1: AES-256-GCM via WebCrypto
+// ============================================
+
+const BACKUP_PASSWORD_ITERATIONS = 600000; // OWASP 2023 recommendation for SHA-256
+const BACKUP_ENCRYPTED_VERSION = 2;        // Version marker for double-encrypted backups
+
+/**
+ * Derive an AES-256 key from a user password using PBKDF2.
+ * Uses the npub as salt (unique per vault, not secret).
+ *
+ * @param {string} password - User-chosen backup password.
+ * @param {string} npubHex  - Hex-encoded Nostr public key (used as salt).
+ * @returns {Promise<CryptoKey>} AES-256-GCM key.
+ */
+async function deriveBackupKey(password, npubHex) {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw', enc.encode(password), 'PBKDF2', false, ['deriveKey']
+    );
+    return crypto.subtle.deriveKey(
+        {
+            name: 'PBKDF2',
+            salt: enc.encode(npubHex),
+            iterations: BACKUP_PASSWORD_ITERATIONS,
+            hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt', 'decrypt']
+    );
+}
+
+/**
+ * Encrypt vault data with AES-256-GCM using a password-derived key (Layer 1).
+ * Returns a versioned envelope that can be detected on restore.
+ *
+ * @param {string} plaintext - JSON string of vault data.
+ * @param {string} password  - User-chosen backup password.
+ * @param {string} npubHex   - Hex Nostr public key (PBKDF2 salt).
+ * @returns {Promise<object>} Envelope: { v, iv, ciphertext } (base64-encoded fields).
+ */
+async function encryptWithBackupPassword(plaintext, password, npubHex) {
+    const key = await deriveBackupKey(password, npubHex);
+    const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV for GCM
+    const enc = new TextEncoder();
+    const ciphertextBuf = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        enc.encode(plaintext)
+    );
+    // Encode IV and ciphertext (includes auth tag) as base64
+    return {
+        v: BACKUP_ENCRYPTED_VERSION,
+        iv: btoa(String.fromCharCode(...iv)),
+        ciphertext: btoa(String.fromCharCode(...new Uint8Array(ciphertextBuf)))
+    };
+}
+
+/**
+ * Decrypt a Layer 1 envelope using the backup password.
+ *
+ * @param {object} envelope  - { v, iv, ciphertext } from encryptWithBackupPassword.
+ * @param {string} password  - User-chosen backup password.
+ * @param {string} npubHex   - Hex Nostr public key (PBKDF2 salt).
+ * @returns {Promise<string>} Decrypted plaintext JSON string.
+ * @throws {DOMException} If password is incorrect (auth tag mismatch).
+ */
+async function decryptWithBackupPassword(envelope, password, npubHex) {
+    const key = await deriveBackupKey(password, npubHex);
+    const iv = Uint8Array.from(atob(envelope.iv), c => c.charCodeAt(0));
+    const ciphertext = Uint8Array.from(atob(envelope.ciphertext), c => c.charCodeAt(0));
+    const plaintextBuf = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        ciphertext
+    );
+    return new TextDecoder().decode(plaintextBuf);
+}
+
+/**
+ * Check if a decrypted NIP-44 payload is a double-encrypted (v2) envelope.
+ *
+ * @param {string} decryptedContent - The NIP-44 decrypted string.
+ * @returns {object|null} Parsed envelope if v2, null otherwise.
+ */
+function parseDoubleEncryptedEnvelope(decryptedContent) {
+    try {
+        const parsed = JSON.parse(decryptedContent);
+        if (parsed && parsed.v === BACKUP_ENCRYPTED_VERSION && parsed.iv && parsed.ciphertext) {
+            return parsed;
+        }
+    } catch (_) {}
+    return null;
+}
+
+// ============================================
+// Backup Password UI Helpers
+// ============================================
+
+/**
+ * Show a modal dialog and return a Promise that resolves with the result.
+ * Used for backup password prompts (set and enter).
+ *
+ * @param {'set'|'enter'|'change'} mode - Dialog mode.
+ * @returns {Promise<string|null>} The password entered, or null if cancelled.
+ */
+function showBackupPasswordModal(mode) {
+    return new Promise((resolve) => {
+        const modal = document.getElementById('backupPasswordModal');
+        const title = document.getElementById('bpModalTitle');
+        const desc = document.getElementById('bpModalDesc');
+        const pass1 = document.getElementById('bpPass1');
+        const pass2Group = document.getElementById('bpPass2Group');
+        const pass2 = document.getElementById('bpPass2');
+        const btnConfirm = document.getElementById('bpModalConfirm');
+        const btnCancel = document.getElementById('bpModalCancel');
+
+        pass1.value = '';
+        pass2.value = '';
+
+        if (mode === 'set' || mode === 'change') {
+            title.textContent = mode === 'change' ? 'Change Backup Password' : 'Set Backup Password';
+            desc.textContent = 'This password adds a second layer of encryption to your cloud backup. It is never stored anywhere — remember it or your backup is unrecoverable.';
+            pass2Group.classList.remove('hidden');
+            pass1.placeholder = 'Backup password';
+            btnConfirm.textContent = mode === 'change' ? 'Change & Re-publish' : 'Set Password & Backup';
+        } else {
+            title.textContent = 'Enter Backup Password';
+            desc.textContent = 'This backup is double-encrypted. Enter the backup password you set when creating it.';
+            pass2Group.classList.add('hidden');
+            pass1.placeholder = 'Backup password';
+            btnConfirm.textContent = 'Decrypt';
+        }
+
+        modal.classList.remove('hidden');
+        setTimeout(() => pass1.focus(), 100);
+
+        function cleanup() {
+            modal.classList.add('hidden');
+            btnConfirm.removeEventListener('click', onConfirm);
+            btnCancel.removeEventListener('click', onCancel);
+            pass1.removeEventListener('keydown', onKeydown);
+            pass2.removeEventListener('keydown', onKeydown);
+        }
+
+        function onConfirm() {
+            const p1 = pass1.value;
+            if (!p1) { showToast('Password required'); return; }
+            if ((mode === 'set' || mode === 'change') && p1 !== pass2.value) {
+                showToast('Passwords don\'t match');
+                return;
+            }
+            cleanup();
+            resolve(p1);
+        }
+
+        function onCancel() {
+            cleanup();
+            resolve(null);
+        }
+
+        function onKeydown(e) {
+            if (e.key === 'Enter') onConfirm();
+            if (e.key === 'Escape') onCancel();
+        }
+
+        btnConfirm.addEventListener('click', onConfirm);
+        btnCancel.addEventListener('click', onCancel);
+        pass1.addEventListener('keydown', onKeydown);
+        pass2.addEventListener('keydown', onKeydown);
+    });
+}
+
+// ============================================
 // Nostr Backup — NIP-44 + kind:30078 (with NIP-04 legacy fallback)
 // ============================================
 const BACKUP_D_TAG = 'vault-backup';
@@ -1299,17 +1500,20 @@ const BACKUP_D_TAG = 'vault-backup';
 /**
  * Encrypt and publish vault data to all configured Nostr relays.
  *
- * Uses NIP-44 encryption (nip44.encrypt with the self-to-self shared secret)
- * and publishes a kind:30078 parameterized replaceable event tagged with
- * BACKUP_D_TAG. Relays keep only the latest version of a replaceable event.
+ * Double-encryption flow:
+ *   Layer 1: AES-256-GCM with PBKDF2(backupPassword, npub) — if backup password is set
+ *   Layer 2: NIP-44 self-encrypt (same as before)
+ *
+ * If no backup password has been set yet, prompts the user to create one (unless silent).
+ * Silent backups (background syncs) use the cached backup password from the current session.
  *
  * Falls back gracefully: success on any relay is sufficient.
- * Logs per-relay success/failure via debugLog.
  *
- * @param {boolean} [silent=false] - If true, suppresses toast notifications.
+ * @param {boolean} [silent=false] - If true, suppresses toast notifications and password prompts.
+ * @param {string}  [overridePassword=null] - Use this password instead of prompting (for change flow).
  * @returns {Promise<void>}
  */
-async function backupToNostr(silent = false) {
+async function backupToNostr(silent = false, overridePassword = null) {
     const { nip44, getEventHash, signEvent, getPublicKey } = window.NostrTools;
 
     if (!vault.privateKey) {
@@ -1321,11 +1525,34 @@ async function backupToNostr(silent = false) {
         const { sk, pk } = await getNostrKeyPair();
         const sharedSecret = nip44.getSharedSecret(sk, pk);
 
-        const data = JSON.stringify({ users: vault.users, settings: vault.settings });
-        const encrypted = nip44.encrypt(sharedSecret, data);
+        const vaultData = JSON.stringify({ users: vault.users, settings: vault.settings });
 
-        // kind:30078 = parameterized replaceable event (app-specific data)
-        // "d" tag makes it replaceable — only latest version stored per relay
+        // Determine backup password
+        let backupPwd = overridePassword || _sessionBackupPassword;
+        if (!backupPwd && !silent) {
+            // First-time backup: prompt user to set a backup password
+            backupPwd = await showBackupPasswordModal('set');
+            if (!backupPwd) {
+                showToast('Backup cancelled');
+                return;
+            }
+            _sessionBackupPassword = backupPwd;
+            vault.settings.hasBackupPassword = true;
+        }
+
+        let layer1Payload;
+        if (backupPwd) {
+            // Layer 1: AES-256-GCM with password-derived key
+            const envelope = await encryptWithBackupPassword(vaultData, backupPwd, pk);
+            layer1Payload = JSON.stringify(envelope);
+        } else {
+            // Silent backup without password set yet — use single-layer (backwards compat)
+            layer1Payload = vaultData;
+        }
+
+        // Layer 2: NIP-44 encryption (always)
+        const encrypted = nip44.encrypt(sharedSecret, layer1Payload);
+
         const event = {
             kind: 30078,
             pubkey: pk,
@@ -1347,7 +1574,6 @@ async function backupToNostr(silent = false) {
                 successRelays.push(url);
                 debugLog(`backupToNostr: published to ${url}`);
             } catch (e) {
-                // Relay publish failures are not sensitive — log always
                 console.error(`backupToNostr: failed on relay [${url}]`, e);
             }
         }
@@ -1372,30 +1598,85 @@ async function backupToNostr(silent = false) {
             if (!silent) showToast('Backup failed');
         }
     } catch (e) {
-        // Outer catch may include key material context — guard with debugLog
         debugLog('backupToNostr: unexpected error:', e);
         if (!silent) showToast('Backup error');
     }
 }
 
 /**
- * Decrypt a backup event, auto-detecting NIP-44 (kind:30078) vs NIP-04 (legacy kind:1).
+ * Change the backup password: prompt for new password, re-encrypt, and re-publish.
+ */
+async function changeBackupPassword() {
+    if (!vault.privateKey) {
+        showToast('Vault not initialized');
+        return;
+    }
+    const newPassword = await showBackupPasswordModal('change');
+    if (!newPassword) return;
+
+    _sessionBackupPassword = newPassword;
+    vault.settings.hasBackupPassword = true;
+    showToast('Re-encrypting...');
+    await backupToNostr(false, newPassword);
+}
+
+// Session-only backup password cache — never persisted to storage
+let _sessionBackupPassword = null;
+
+/**
+ * Decrypt a backup event, auto-detecting format:
+ *   1. NIP-44 decrypt (kind:30078) or NIP-04 decrypt (legacy kind:1)
+ *   2. Check if inner payload is a v2 double-encrypted envelope
+ *   3. If v2: prompt for backup password and AES-256-GCM decrypt
+ *   4. If plain JSON: return directly (legacy single-layer)
  *
- * @param {object} event - Nostr event object with kind and content.
- * @param {string} sk    - Hex Nostr secret key.
- * @param {string} pk    - Hex Nostr public key.
+ * @param {object}  event                - Nostr event object with kind and content.
+ * @param {string}  sk                   - Hex Nostr secret key.
+ * @param {string}  pk                   - Hex Nostr public key.
+ * @param {boolean} [interactive=true]   - If true, prompt user for backup password.
+ *                                         If false and password is needed, throws.
  * @returns {Promise<string>} Decrypted plaintext JSON string.
  */
-async function decryptBackupEvent(event, sk, pk) {
+async function decryptBackupEvent(event, sk, pk, interactive = true) {
     const { nip44, nip04 } = window.NostrTools;
 
+    let layer2Decrypted;
     if (event.kind === 30078) {
-        // NIP-44 encryption (current format)
         const sharedSecret = nip44.getSharedSecret(sk, pk);
-        return nip44.decrypt(sharedSecret, event.content);
+        layer2Decrypted = nip44.decrypt(sharedSecret, event.content);
     } else {
-        // Legacy NIP-04 (kind:1 with nostr-pwd-backup tag)
-        return await nip04.decrypt(sk, event.pubkey, event.content);
+        layer2Decrypted = await nip04.decrypt(sk, event.pubkey, event.content);
+    }
+
+    // Check for double-encrypted v2 envelope
+    const envelope = parseDoubleEncryptedEnvelope(layer2Decrypted);
+    if (!envelope) {
+        // Legacy single-layer backup — return as-is
+        return layer2Decrypted;
+    }
+
+    // Double-encrypted: need backup password
+    let backupPwd = _sessionBackupPassword;
+    if (!backupPwd && interactive) {
+        backupPwd = await showBackupPasswordModal('enter');
+        if (!backupPwd) throw new Error('Backup password required but cancelled');
+    }
+    if (!backupPwd) {
+        throw new Error('Double-encrypted backup requires password');
+    }
+
+    try {
+        const decrypted = await decryptWithBackupPassword(envelope, backupPwd, pk);
+        // Cache the successful password for this session
+        _sessionBackupPassword = backupPwd;
+        vault.settings.hasBackupPassword = true;
+        return decrypted;
+    } catch (e) {
+        // Auth tag mismatch = wrong password
+        if (interactive) {
+            showToast('Wrong backup password');
+        }
+        throw new Error('Backup password incorrect');
     }
 }
 
@@ -1446,11 +1727,10 @@ async function restoreFromNostr() {
         }
 
         if (latest) {
-            const decrypted = await decryptBackupEvent(latest, sk, pk);
+            const decrypted = await decryptBackupEvent(latest, sk, pk, true);
             const data = JSON.parse(decrypted);
             vault.users = { ...vault.users, ...data.users };
             if (data.settings) vault.settings = { ...vault.settings, ...data.settings };
-            // Save the freshly restored data locally
             saveLocalNonceBackup();
             showToast('Restored from Nostr!');
             renderSiteList();
@@ -1458,9 +1738,12 @@ async function restoreFromNostr() {
             showToast('No backup found');
         }
     } catch (e) {
-        // May include decrypted content — guard
-        debugLog('restoreFromNostr: error:', e);
-        showToast('Restore error');
+        if (e.message && e.message.includes('cancelled')) {
+            showToast('Restore cancelled');
+        } else {
+            debugLog('restoreFromNostr: error:', e);
+            showToast('Restore error');
+        }
     }
 }
 
@@ -1582,11 +1865,10 @@ async function restoreFromId(eventId, eventKind) {
         }
 
         if (found) {
-            const decrypted = await decryptBackupEvent(found, sk, pk);
+            const decrypted = await decryptBackupEvent(found, sk, pk, true);
             const data = JSON.parse(decrypted);
             vault.users = data.users || vault.users;
             if (data.settings) vault.settings = { ...vault.settings, ...data.settings };
-            // Persist the restored data locally
             saveLocalNonceBackup();
             showToast('Restored!');
             showScreen('mainScreen');
@@ -1594,9 +1876,12 @@ async function restoreFromId(eventId, eventKind) {
             showToast('Backup not found');
         }
     } catch (e) {
-        // May include decrypted content — guard
-        debugLog('restoreFromId: error:', e);
-        showToast('Restore error');
+        if (e.message && e.message.includes('cancelled')) {
+            showToast('Restore cancelled');
+        } else {
+            debugLog('restoreFromId: error:', e);
+            showToast('Restore error');
+        }
     }
 }
 
@@ -1903,6 +2188,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btnTriggerImport: () => triggerImport(),
         btnSaveAdvancedSettings: () => saveAdvancedSettings(),
         btnCopySeedPhrase: () => copySeedPhrase(),
+        btnChangeBackupPassword: () => changeBackupPassword(),
     };
 
     Object.entries(btnBindings).forEach(([id, handler]) => {
