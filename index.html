@@ -717,7 +717,7 @@
             </button>
         </div>
         <div class="version-badge mt-24" style="justify-content: center;">
-            <span>v3.2</span>
+            <span>v3.3</span>
             <span>•</span>
             <span>Installable PWA</span>
         </div>
@@ -758,6 +758,15 @@
             Enter the requested words to confirm you've saved your seed phrase.
         </p>
         <div id="verifyInputs"></div>
+        <div class="passphrase-field" style="margin-top: 16px;">
+            <input type="password" id="newVaultPassphrase"
+                   placeholder="BIP39 Passphrase (optional — leave empty if unsure)"
+                   autocomplete="off" autocorrect="off" spellcheck="false"
+                   style="width:100%; padding: 12px 14px; font-size: 15px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text);" />
+            <small style="color: var(--text-muted); display: block; margin-top: 4px; font-size: 12px;">
+                ℹ️ BIP39 Passphrase (25th word) — advanced second factor. Required to restore vault.
+            </small>
+        </div>
         <div class="spacer"></div>
         <button class="btn btn-primary" id="btnVerifySeedBackup">
             Verify & Continue
