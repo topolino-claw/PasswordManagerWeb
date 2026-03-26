@@ -780,6 +780,14 @@
         <div class="seed-progress">
             <span id="wordCount">0</span>/12 words
         </div>
+        <div class="passphrase-field" style="margin-top: 8px;">
+            <input type="password" id="bip39Passphrase" class="input-field"
+                   placeholder="BIP39 Passphrase (optional)"
+                   autocomplete="off" autocorrect="off" spellcheck="false" />
+            <small style="color: var(--text-muted); display: block; margin-top: 4px;">
+                Advanced: 25th word. Leave empty if unsure.
+            </small>
+        </div>
         <div class="spacer"></div>
         <button class="btn btn-primary" id="btnRestoreFromSeed">
             Restore Vault

@@ -292,6 +292,99 @@ async function deriveNostrKeys(privateKey) {
 }
 
 // ============================================
+// NIP-06 Standard Nostr Key Derivation
+// ============================================
+// Derives Nostr keys via BIP39 → BIP32 → m/44'/1237'/0'/0'/0' (all hardened).
+// Pure WebCrypto implementation — no external dependencies.
+//
+// Test vector: mnemonic "abandon abandon abandon abandon abandon abandon
+// abandon abandon abandon abandon abandon about" (empty passphrase)
+// produces nsec via this all-hardened path. Verify against any NIP-06 reference
+// implementation using the same path.
+
+const SECP256K1_N = BigInt('0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141');
+
+function secp256k1ModAdd(a, b) {
+    const aBig = BigInt('0x' + Array.from(a).map(x => x.toString(16).padStart(2, '0')).join(''));
+    const bBig = BigInt('0x' + Array.from(b).map(x => x.toString(16).padStart(2, '0')).join(''));
+    const result = (aBig + bBig) % SECP256K1_N;
+    const hex = result.toString(16).padStart(64, '0');
+    return new Uint8Array(hex.match(/.{2}/g).map(b => parseInt(b, 16)));
+}
+
+async function mnemonicToSeed(mnemonic, passphrase = '') {
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+        'raw', enc.encode(mnemonic.normalize('NFKD')),
+        'PBKDF2', false, ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits({
+        name: 'PBKDF2',
+        salt: enc.encode(('mnemonic' + passphrase).normalize('NFKD')),
+        iterations: 2048,
+        hash: 'SHA-512'
+    }, keyMaterial, 512);
+    return new Uint8Array(bits);
+}
+
+async function bip32MasterKey(seed) {
+    const key = await crypto.subtle.importKey(
+        'raw', new TextEncoder().encode('Bitcoin seed'),
+        { name: 'HMAC', hash: 'SHA-512' }, false, ['sign']
+    );
+    const result = new Uint8Array(await crypto.subtle.sign('HMAC', key, seed));
+    return { privateKey: result.slice(0, 32), chainCode: result.slice(32) };
+}
+
+async function bip32HardenedChild(parentKey, chainCode, index) {
+    const hardened = index + 0x80000000;
+    const data = new Uint8Array(37);
+    data[0] = 0x00;
+    data.set(parentKey, 1);
+    data[33] = (hardened >>> 24) & 0xff;
+    data[34] = (hardened >>> 16) & 0xff;
+    data[35] = (hardened >>> 8) & 0xff;
+    data[36] = hardened & 0xff;
+
+    const hmacKey = await crypto.subtle.importKey(
+        'raw', chainCode,
+        { name: 'HMAC', hash: 'SHA-512' }, false, ['sign']
+    );
+    const result = new Uint8Array(await crypto.subtle.sign('HMAC', hmacKey, data));
+    return {
+        privateKey: secp256k1ModAdd(result.slice(0, 32), parentKey),
+        chainCode: result.slice(32)
+    };
+}
+
+/**
+ * Derive Nostr private key via BIP32 path m/44'/1237'/0'/0'/0' (all hardened).
+ * @param {string} mnemonic - BIP39 mnemonic phrase.
+ * @param {string} [passphrase=''] - Optional BIP39 passphrase (25th word).
+ * @returns {Promise<string>} Hex-encoded 32-byte private key.
+ */
+async function deriveNostrKeyNIP06(mnemonic, passphrase = '') {
+    const seed = await mnemonicToSeed(mnemonic, passphrase);
+    let { privateKey, chainCode } = await bip32MasterKey(seed);
+    for (const index of [44, 1237, 0, 0, 0]) {
+        ({ privateKey, chainCode } = await bip32HardenedChild(privateKey, chainCode, index));
+    }
+    return Array.from(privateKey).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Derive full Nostr key set (nsec, npub, hex) via NIP-06 standard path.
+ * @param {string} mnemonic - BIP39 mnemonic phrase.
+ * @param {string} [passphrase=''] - Optional BIP39 passphrase.
+ * @returns {Promise<{nsec: string, npub: string, hex: string}>}
+ */
+async function deriveNostrKeysNIP06(mnemonic, passphrase = '') {
+    const { nip19, getPublicKey } = window.NostrTools;
+    const hex = await deriveNostrKeyNIP06(mnemonic, passphrase);
+    return { nsec: nip19.nsecEncode(hex), npub: getPublicKey(hex), hex };
+}
+
+// ============================================
 // Password Generation (preserved from original)
 // ============================================
 
@@ -444,7 +537,8 @@ async function verifySeedBackup() {
     });
 
     if (valid) {
-        await initializeVault(vault.seedPhrase);
+        const passphrase = document.getElementById('bip39Passphrase')?.value || '';
+        await initializeVault(vault.seedPhrase, passphrase);
         await checkForRemoteBackups();
         showScreen('mainScreen');
     } else {
@@ -468,7 +562,8 @@ async function restoreFromSeed() {
         return;
     }
 
-    await initializeVault(input);
+    const passphrase = document.getElementById('bip39Passphrase')?.value || '';
+    await initializeVault(input, passphrase);
     await checkForRemoteBackups();
     showScreen('mainScreen');
 }
@@ -489,10 +584,11 @@ async function restoreFromSeed() {
  * @param {string} seedPhrase - Valid BIP39 mnemonic.
  * @returns {Promise<void>}
  */
-async function initializeVault(seedPhrase) {
+async function initializeVault(seedPhrase, passphrase = '') {
     vault.seedPhrase = seedPhrase.replace(/\s+/g, ' ').trim().toLowerCase();
     vault.privateKey = await derivePrivateKey(vault.seedPhrase);
-    nostrKeys = await deriveNostrKeys(vault.privateKey);
+    nostrKeys = await deriveNostrKeysNIP06(vault.seedPhrase, passphrase);
+    vault.passphrase = passphrase;
 
     // Attempt to load local nonce backup as a low-priority seed.
     // Nostr data (fetched later in checkForRemoteBackups) will overwrite this.
@@ -644,42 +740,38 @@ async function silentRestoreFromNostr() {
 
     const { sk, pk } = await getNostrKeyPair();
 
-    let latest = null;
-
-    for (const url of RELAYS) {
-        try {
-            debugLog(`silentRestoreFromNostr: connecting to ${url}`);
-            const relay = await connectRelay(url);
-
-            // Query both new (kind:30078) and legacy (kind:1) formats
-            const events = await subscribeAndCollect(relay, [
-                { kinds: [30078], authors: [pk], "#d": [BACKUP_D_TAG], limit: 1 },
-                { kinds: [1], authors: [pk], "#t": ["nostr-pwd-backup"], limit: 1 }
-            ], 6000);
-
-            relay.close();
-
-            if (events.length > 0) {
-                debugLog(`silentRestoreFromNostr: ${url} returned ${events.length} event(s)`);
-            } else {
-                debugLog(`silentRestoreFromNostr: ${url} returned no events`);
+    // Helper: query all relays for backup events authored by a given pubkey
+    async function fetchLatestFromRelays(authorPk) {
+        let latest = null;
+        for (const url of RELAYS) {
+            try {
+                debugLog(`silentRestoreFromNostr: connecting to ${url}`);
+                const relay = await connectRelay(url);
+                const events = await subscribeAndCollect(relay, [
+                    { kinds: [30078], authors: [authorPk], "#d": [BACKUP_D_TAG], limit: 1 },
+                    { kinds: [1], authors: [authorPk], "#t": ["nostr-pwd-backup"], limit: 1 }
+                ], 6000);
+                relay.close();
+                if (events.length > 0) {
+                    debugLog(`silentRestoreFromNostr: ${url} returned ${events.length} event(s)`);
+                } else {
+                    debugLog(`silentRestoreFromNostr: ${url} returned no events`);
+                }
+                for (const e of events) {
+                    if (!latest || e.created_at > latest.created_at) latest = e;
+                }
+            } catch (e) {
+                console.error(`silentRestoreFromNostr: relay error [${url}]`, e);
             }
-
-            for (const e of events) {
-                if (!latest || e.created_at > latest.created_at) latest = e;
-            }
-        } catch (e) {
-            // Relay connection errors are not sensitive — log them always
-            console.error(`silentRestoreFromNostr: relay error [${url}]`, e);
         }
+        return latest;
     }
 
-    if (latest) {
+    // Helper: attempt to decrypt and apply a backup event
+    async function tryApplyBackup(event, decryptSk, decryptPk) {
         try {
-            // Try non-interactive first (use cached password if available)
-            const decrypted = await decryptBackupEvent(latest, sk, pk, false);
+            const decrypted = await decryptBackupEvent(event, decryptSk, decryptPk, false);
             const data = JSON.parse(decrypted);
-            const isLegacy = !parseDoubleEncryptedEnvelope(decrypted) && !_sessionBackupPassword;
             vault.users = { ...vault.users, ...data.users };
             if (data.settings) {
                 vault.settings = { ...vault.settings, ...data.settings };
@@ -688,11 +780,9 @@ async function silentRestoreFromNostr() {
             saveLocalNonceBackup();
             return { found: true, isLegacy: !vault.settings.hasBackupPassword };
         } catch (e) {
-            // If it's a double-encrypted backup and we don't have the password,
-            // try interactively (prompt the user)
             if (e.message && e.message.includes('password')) {
                 try {
-                    const decrypted = await decryptBackupEvent(latest, sk, pk, true);
+                    const decrypted = await decryptBackupEvent(event, decryptSk, decryptPk, true);
                     const data = JSON.parse(decrypted);
                     vault.users = { ...vault.users, ...data.users };
                     if (data.settings) {
@@ -703,11 +793,35 @@ async function silentRestoreFromNostr() {
                     return { found: true, isLegacy: false };
                 } catch (e2) {
                     debugLog('silentRestoreFromNostr: interactive decrypt failed:', e2);
-                    return { found: false, isLegacy: false };
                 }
             }
             debugLog('silentRestoreFromNostr: decrypt failed:', e);
-            return { found: false, isLegacy: false };
+        }
+        return null;
+    }
+
+    // 1. Try NIP-06 key (current)
+    let latest = await fetchLatestFromRelays(pk);
+    if (latest) {
+        const result = await tryApplyBackup(latest, sk, pk);
+        if (result) return result;
+    }
+
+    // 2. Legacy fallback: try SHA-256 derived key if no NIP-06 backup found
+    if (!vault.passphrase || vault.passphrase === '') {
+        const legacy = await getLegacyNostrKeyPair();
+        if (legacy.pk !== pk) { // Only if legacy key differs from current
+            debugLog('silentRestoreFromNostr: trying legacy key fallback');
+            latest = await fetchLatestFromRelays(legacy.pk);
+            if (latest) {
+                const result = await tryApplyBackup(latest, legacy.sk, legacy.pk);
+                if (result) {
+                    showToast('Legacy backup found — upgrading to NIP-06 key');
+                    // Re-publish with new NIP-06 key
+                    backupToNostrDebounced();
+                    return result;
+                }
+            }
         }
     }
 
@@ -730,7 +844,7 @@ function lockVault(skipConfirm = false) {
     clipboardClearTimer = null;
     navigator.clipboard.writeText('').catch(() => {});
     // Wipe all sensitive data from memory
-    vault = { privateKey: '', seedPhrase: '', users: {}, settings: { hashLength: 16 } };
+    vault = { privateKey: '', seedPhrase: '', passphrase: '', users: {}, settings: { hashLength: 16 } };
     nostrKeys = { nsec: '', npub: '' };
     _sessionBackupPassword = null;
     navigationStack = ['welcomeScreen'];
@@ -1164,13 +1278,21 @@ async function unlockVault() {
         if (data.privateKey) {
             // Legacy format — privateKey was stored directly
             vault.privateKey = data.privateKey;
+            vault.seedPhrase = data.seedPhrase || '';
+            vault.passphrase = data.passphrase || '';
             vault.users = data.users || {};
             vault.settings = data.settings || { hashLength: 16 };
         } else {
             vault = data;
+            vault.passphrase = vault.passphrase || '';
         }
 
-        nostrKeys = await deriveNostrKeys(vault.privateKey);
+        // Prefer NIP-06 derivation when seed phrase is available, fall back to legacy
+        if (vault.seedPhrase) {
+            nostrKeys = await deriveNostrKeysNIP06(vault.seedPhrase, vault.passphrase || '');
+        } else {
+            nostrKeys = await deriveNostrKeys(vault.privateKey);
+        }
         unlockAttempts = 0;
 
         resetInactivityTimer();
@@ -1209,6 +1331,7 @@ function saveEncrypted() {
     const saveData = {
         privateKey: vault.privateKey,
         seedPhrase: vault.seedPhrase,
+        passphrase: vault.passphrase || '',
         users: vault.users,
         settings: vault.settings
     };
@@ -1380,6 +1503,24 @@ function copySeedPhrase() {
  *   pk: hex Nostr public key
  */
 async function getNostrKeyPair() {
+    // Use NIP-06 derived keys if available, otherwise fall back to legacy SHA-256
+    if (nostrKeys && nostrKeys.hex) {
+        const { getPublicKey } = window.NostrTools;
+        return { sk: nostrKeys.hex, pk: getPublicKey(nostrKeys.hex) };
+    }
+    const { getPublicKey } = window.NostrTools;
+    const utf8 = new TextEncoder().encode(vault.privateKey);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
+    const sk = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+    const pk = getPublicKey(sk);
+    return { sk, pk };
+}
+
+/**
+ * Get legacy Nostr key pair (SHA-256 of vault private key).
+ * Used for fallback backup restoration from pre-NIP-06 backups.
+ */
+async function getLegacyNostrKeyPair() {
     const { getPublicKey } = window.NostrTools;
     const utf8 = new TextEncoder().encode(vault.privateKey);
     const hashBuffer = await crypto.subtle.digest('SHA-256', utf8);
