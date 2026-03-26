@@ -552,6 +552,14 @@ async function checkForRemoteBackups() {
             if (isLegacy && !vault.settings.hasBackupPassword) {
                 showBackupPasswordNudge();
             }
+            // If vault has a backup password but session cache is empty, prompt early
+            // so silent backups don't pile up as pending
+            if (vault.settings.hasBackupPassword && !_sessionBackupPassword) {
+                const pwd = await showBackupPasswordModal('enter');
+                if (pwd) {
+                    _sessionBackupPassword = pwd;
+                }
+            }
         } else {
             showToast('Vault ready');
             // No backup on relays and no backup password set — nudge to set one
@@ -571,7 +579,7 @@ async function checkForRemoteBackups() {
  * Shown once per session. Inserts a dismissible banner in the settings screen
  * and shows a brief actionable toast on the main screen.
  */
-function showBackupPasswordNudge() {
+function showBackupPasswordNudge(pendingMsg) {
     if (_backupPasswordNudgeShown) return;
     _backupPasswordNudgeShown = true;
 
@@ -581,19 +589,26 @@ function showBackupPasswordNudge() {
 
     toast.innerHTML = '';
     const text = document.createElement('span');
-    text.textContent = '🔒 Backup not password-protected. ';
+    text.textContent = pendingMsg || '🔒 Backup not password-protected. ';
 
     const btn = document.createElement('button');
     btn.textContent = 'Set now';
     btn.style.cssText = 'background:none;border:none;color:var(--accent,#7c5cff);cursor:pointer;text-decoration:underline;font-size:inherit;padding:0;margin-left:4px;';
     btn.addEventListener('click', async () => {
         toast.classList.remove('show');
-        const pwd = await showBackupPasswordModal('set');
+        const mode = vault.settings.hasBackupPassword ? 'enter' : 'set';
+        const pwd = await showBackupPasswordModal(mode);
         if (pwd) {
             _sessionBackupPassword = pwd;
             vault.settings.hasBackupPassword = true;
-            showToast('Re-encrypting backup...');
-            await backupToNostr(false, pwd);
+            if (_pendingBackupAfterPassword) {
+                _pendingBackupAfterPassword = false;
+                showToast('Syncing backup...');
+                await backupToNostr(false, pwd);
+            } else {
+                showToast('Re-encrypting backup...');
+                await backupToNostr(false, pwd);
+            }
         }
     });
 
@@ -610,6 +625,9 @@ function showBackupPasswordNudge() {
 
 /** Whether the backup password nudge has been shown this session. @type {boolean} */
 let _backupPasswordNudgeShown = false;
+
+/** Whether a backup is pending because no backup password was available. @type {boolean} */
+let _pendingBackupAfterPassword = false;
 
 /**
  * Silently attempt to restore vault data from Nostr relays without UI prompts.
@@ -1617,28 +1635,33 @@ async function backupToNostr(silent = false, overridePassword = null) {
 
         const vaultData = JSON.stringify({ users: vault.users, settings: vault.settings });
 
-        // Determine backup password
+        // Determine backup password — NEVER fall back to single-layer
         let backupPwd = overridePassword || _sessionBackupPassword;
-        if (!backupPwd && !silent) {
-            // First-time backup: prompt user to set a backup password
-            backupPwd = await showBackupPasswordModal('set');
-            if (!backupPwd) {
-                showToast('Backup cancelled');
+        if (!backupPwd) {
+            if (silent) {
+                // Queue backup for when password becomes available — do NOT send single-layer
+                _pendingBackupAfterPassword = true;
+                const msg = vault.settings.hasBackupPassword
+                    ? '🔒 Backup pending — re-enter backup password. '
+                    : '🔒 Backup pending — set password to sync. ';
+                showBackupPasswordNudge(msg);
                 return;
+            } else {
+                // Interactive — show modal
+                const mode = vault.settings.hasBackupPassword ? 'enter' : 'set';
+                backupPwd = await showBackupPasswordModal(mode);
+                if (!backupPwd) {
+                    showToast('Backup cancelled');
+                    return;
+                }
+                _sessionBackupPassword = backupPwd;
+                vault.settings.hasBackupPassword = true;
             }
-            _sessionBackupPassword = backupPwd;
-            vault.settings.hasBackupPassword = true;
         }
 
-        let layer1Payload;
-        if (backupPwd) {
-            // Layer 1: AES-256-GCM with password-derived key
-            const envelope = await encryptWithBackupPassword(vaultData, backupPwd, pk);
-            layer1Payload = JSON.stringify(envelope);
-        } else {
-            // Silent backup without password set yet — use single-layer (backwards compat)
-            layer1Payload = vaultData;
-        }
+        // Layer 1: AES-256-GCM with password-derived key (always — no single-layer fallback)
+        const envelope = await encryptWithBackupPassword(vaultData, backupPwd, pk);
+        const layer1Payload = JSON.stringify(envelope);
 
         // Layer 2: NIP-44 encryption (always)
         const encrypted = nip44.encrypt(sharedSecret, layer1Payload);
