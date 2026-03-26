@@ -1328,7 +1328,8 @@ function showSeedPhrase() {
  */
 function copySeedPhrase() {
     navigator.clipboard.writeText(vault.seedPhrase).then(() => {
-        showToast('Seed phrase copied!');
+        showToast('Seed phrase copied — clipboard clears in 15s');
+        setTimeout(() => navigator.clipboard.writeText('').catch(() => {}), 15000);
     });
 }
 
