@@ -1,136 +1,116 @@
-# Vault v3
+# Vault — Deterministic Password Manager
 
-A deterministic password manager that generates passwords on-the-fly using a BIP39 seed phrase. No storage, no sync, just math.
+No storage. No account. No cloud dependency. Just your seed phrase and math.
 
-## Features
+**Live:** https://topolino-claw.github.io/PasswordManagerWeb/  
+**Offline:** download this repo and open `index.html` — works with zero internet
 
-- **Deterministic passwords** — Same inputs = same password, every time
-- **BIP39 seed phrase** — Industry standard, write it down and recover anywhere
-- **Double-encrypted cloud backup** — AES-256-GCM + NIP-44 encryption to Nostr relays
-- **Offline first** — Works without internet, even from a downloaded file
-- **Local encryption** — Save to device with password protection
-- **Installable PWA** — Add to home screen on mobile, runs fully offline
-
-## Download for Offline Use
-
-Vault works 100% offline. To download:
-
-1. Clone or download this repo: `git clone https://github.com/topolino-claw/PasswordManagerWeb.git`
-2. Open `index.html` in any modern browser
-3. That's it — no build step, no server, no internet required
-
-All dependencies are bundled locally:
-- `crypto-js.min.js` — SHA-256 / AES
-- `bip39WordList.js` — BIP39 word list
-- `lib/nostr-tools.min.js` — Nostr protocol
-
-No CDN calls, no external requests (except WebSocket connections to Nostr relays when you explicitly backup/restore).
-
-### Install as PWA
-
-On mobile or desktop, open [Vault](https://topolino-claw.github.io/PasswordManagerWeb/) and use "Add to Home Screen" / "Install App". The service worker caches everything for offline use.
-
-## Quick Start
-
-1. Open [Vault](https://topolino-claw.github.io/PasswordManagerWeb/) or `index.html` locally
-2. Create a new vault or restore an existing seed phrase
-3. Add sites by searching and hitting Enter
-4. Copy your password — it's generated instantly
+---
 
 ## How It Works
 
-### Password Generation
+Every password is derived mathematically from:
 
 ```
-password = "PASS" + SHA256(privateKey + "/" + username + "/" + site + "/" + version).slice(0, 16) + "249+"
+password = "PASS" + SHA256(privateKey + "/" + username + "/" + domain + "/" + nonce).slice(0,16) + "249+"
 ```
 
-- `privateKey`: Derived from your BIP39 seed phrase
-- `username`: Your email or username for the site
-- `site`: The domain (e.g., `github.com`)
-- `version`: Starts at 0, increment if you need a new password
+Where `privateKey` is derived from your BIP39 seed phrase. Same inputs → same password, always. Nothing is stored — passwords are re-derived on demand.
 
-### Seed Phrase → Private Key
+**Nonce** = version counter (starts at 0). Increment it when you need to rotate a password.
 
-1. Each BIP39 word maps to an index (0–2047)
-2. Indices are padded to 4 digits and concatenated
-3. The decimal string is converted to hexadecimal
+---
 
-### Cloud Backup (Double Encryption)
+## Quick Start
 
-Your site list (not your seed phrase) is protected with two independent encryption layers:
+1. Open the app (online or local file)
+2. **New vault:** generate seed phrase → write it on paper → verify it → done
+3. **Restore:** enter your seed phrase → vault loads from Nostr backup
+4. Add a site, enter your username, copy the password
+5. Use that password on the site
 
-**Layer 1 — Backup Password (AES-256-GCM)**
+---
+
+## Master Keys (KEEP THESE SAFE)
+
+You need two things to access your vault:
+
+| Key | What it is | Where it lives |
+|---|---|---|
+| **Seed phrase** | 12 BIP39 words — the root of everything | Written on paper, 2 copies, separate locations |
+| **Backup password** | Protects your Nostr cloud backup | Only in your head — NEVER written down |
+
+**Lose the seed phrase = lose the vault. No recovery.**
+
+---
+
+## Nostr Backup
+
+Your site list (not passwords) is encrypted and published to Nostr relays automatically after every change.
+
+**Encryption:** two layers
+1. `PBKDF2(backupPassword, npub, 600k iterations)` → `AES-256-GCM`
+2. `NIP-44` with your Nostr key (derived from seed)
+
+Relays used: relay.damus.io · nostr-pub.wellorder.net · relay.snort.social · nos.lol
+
+Relay operators see only encrypted ciphertext. Useless without both keys.
+
+---
+
+## Restore on New Device
+
+1. Open vault (online or local file)
+2. Enter seed phrase
+3. Vault fetches Nostr backup automatically
+4. Enter backup password when prompted → site list restored
+5. All passwords re-derive from the seed — nothing was ever stored
+
+---
+
+## Files (all local, zero CDN)
+
 ```
-key = PBKDF2(backupPassword, salt=npub, iterations=600000, hash=SHA-256)
-envelope = AES-256-GCM(vaultData, key)
+index.html          — the app
+app.js              — all logic (~2300 lines)
+bip39WordList.js    — BIP39 word list
+crypto-js.min.js    — SHA256 + AES
+lib/
+  nostr-tools.min.js — Nostr protocol
+sw.js               — service worker (PWA offline)
+manifest.json       — PWA manifest
+docs/               — technical documentation
 ```
 
-**Layer 2 — NIP-44 (Nostr)**
-```
-sharedSecret = nip44.getSharedSecret(nsec, npub)  // self-to-self
-ciphertext = nip44.encrypt(sharedSecret, envelope)
-```
+---
 
-Published as `kind:30078` event with `d` tag `vault-backup`.
+## Security Model
 
-**Why two layers:**
-- Even if your nsec is compromised → attacker can't read without your backup password
-- Even if your backup password leaks → attacker can't decrypt without your nsec
-- Two independent factors required to access your data
+- Seed phrase: **never transmitted**, derived locally every session
+- Passwords: **never stored**, re-derived on demand
+- Backup: **double-encrypted** before leaving your device
+- Local vault: **AES-encrypted** in localStorage
+- Zero CDN, zero third-party requests for core function
 
-**Legacy support:** Old backups (single-layer NIP-44 and NIP-04 kind:1) are auto-detected and restored without a password prompt.
+---
 
-## Files
+## Recreating From Scratch
 
-- `index.html` — Main app (v3, redesigned UI)
-- `app.js` — Application logic
-- `sw.js` — Service worker for offline PWA support
-- `manifest.json` — PWA manifest
-- `index-legacy.html` — Previous version (v2)
-- `script.js` — Legacy v2 logic
-- `bip39WordList.js` — BIP39 wordlist
-- `crypto-js.min.js` — SHA256/AES
-- `lib/nostr-tools.min.js` — Nostr protocol
+If you lose everything except your seed phrase and backup password:
 
-## Security
+1. Download this repo (or clone from GitHub)
+2. Open `index.html`
+3. Click "Restore existing vault"
+4. Enter seed phrase
+5. Enter backup password
+6. All sites and nonces are restored from Nostr
 
-- **Seed phrase = master key** — Keep it safe, offline, written on paper
-- **Backup password** — Second factor for cloud backups. Never stored, only in your head
-- **Never transmitted** — Passwords are generated locally, never sent anywhere
-- **PBKDF2 with 600,000 iterations** — OWASP 2023 recommendation for key derivation
-- **AES-256-GCM** — Authenticated encryption via Web Crypto API
-- **Auto-lock** — Vault locks after 5 minutes of inactivity
+If you also lose the Nostr backup: seed phrase still derives all your passwords. You just need to re-add the site list manually (you'll remember your sites).
 
-## Changelog
+---
 
-### v3.2
-- **Double-encrypted cloud backup** — AES-256-GCM (backup password) + NIP-44 (nsec)
-- PBKDF2 key derivation with 600,000 iterations (OWASP 2023)
-- Backup password management UI (set, change, status indicator)
-- Full legacy backup compatibility (single-layer NIP-44 and NIP-04)
-- Updated README with offline download instructions
+## Version
 
-### v3.1
-- Relay connection logging
-- Sensitive log guarding (debug mode)
-- Local encrypted nonce backup
+**v3.2** — double-encrypted backup, relay confirmation, debounced sync, DOM wipe on lock
 
-### v3.0
-- Complete UI redesign — dark mode, mobile-first
-- Simplified navigation
-- Site search with fuzzy matching
-- One-tap copy with toast feedback
-
-### v2.0
-- Nostr backup/restore
-- Configurable hash length
-- Local encryption
-
-## License
-
-MIT
-
-## Source
-
-[GitHub](https://github.com/topolino-claw/PasswordManagerWeb)
+Repo: https://github.com/topolino-claw/PasswordManagerWeb
