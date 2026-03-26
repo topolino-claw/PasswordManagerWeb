@@ -543,13 +543,21 @@ async function checkForRemoteBackups() {
     showLoading(`Looking for remote backups...\n${npubShort}`);
 
     try {
-        const found = await silentRestoreFromNostr();
+        const { found, isLegacy } = await silentRestoreFromNostr();
         hideLoading();
 
         if (found) {
             showToast('Synced from cloud backup!');
+            // If backup was single-layer (legacy), nudge user to set a backup password
+            if (isLegacy && !vault.settings.hasBackupPassword) {
+                showBackupPasswordNudge();
+            }
         } else {
             showToast('Vault ready');
+            // No backup on relays and no backup password set — nudge to set one
+            if (!vault.settings.hasBackupPassword) {
+                showBackupPasswordNudge();
+            }
         }
     } catch (e) {
         console.error('Backup check failed:', e);
@@ -559,15 +567,62 @@ async function checkForRemoteBackups() {
 }
 
 /**
+ * Show a non-blocking nudge banner suggesting the user set a backup password.
+ * Shown once per session. Inserts a dismissible banner in the settings screen
+ * and shows a brief actionable toast on the main screen.
+ */
+function showBackupPasswordNudge() {
+    if (_backupPasswordNudgeShown) return;
+    _backupPasswordNudgeShown = true;
+
+    // Show an actionable toast on the main screen
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+
+    toast.innerHTML = '';
+    const text = document.createElement('span');
+    text.textContent = '🔒 Backup not password-protected. ';
+
+    const btn = document.createElement('button');
+    btn.textContent = 'Set now';
+    btn.style.cssText = 'background:none;border:none;color:var(--accent,#7c5cff);cursor:pointer;text-decoration:underline;font-size:inherit;padding:0;margin-left:4px;';
+    btn.addEventListener('click', async () => {
+        toast.classList.remove('show');
+        const pwd = await showBackupPasswordModal('set');
+        if (pwd) {
+            _sessionBackupPassword = pwd;
+            vault.settings.hasBackupPassword = true;
+            showToast('Re-encrypting backup...');
+            await backupToNostr(false, pwd);
+        }
+    });
+
+    toast.appendChild(text);
+    toast.appendChild(btn);
+    toast.classList.add('show');
+    setTimeout(() => {
+        if (toast.classList.contains('show')) {
+            toast.classList.remove('show');
+            toast.innerHTML = ''; // Reset for normal showToast usage
+        }
+    }, 10000);
+}
+
+/** Whether the backup password nudge has been shown this session. @type {boolean} */
+let _backupPasswordNudgeShown = false;
+
+/**
  * Silently attempt to restore vault data from Nostr relays without UI prompts.
  * Queries all configured relays for the latest backup event, decrypts it,
  * and merges users/settings into the current vault state.
  * After a successful restore, saves a local encrypted backup.
  *
- * @returns {Promise<boolean>} True if a backup was found and applied, false otherwise.
+ * @returns {Promise<{ found: boolean, isLegacy: boolean }>}
+ *   found    — true if a backup was found and applied
+ *   isLegacy — true if the backup was single-layer (no v2 envelope)
  */
 async function silentRestoreFromNostr() {
-    if (!vault.privateKey) return false;
+    if (!vault.privateKey) return { found: false, isLegacy: false };
 
     const { sk, pk } = await getNostrKeyPair();
 
@@ -606,13 +661,14 @@ async function silentRestoreFromNostr() {
             // Try non-interactive first (use cached password if available)
             const decrypted = await decryptBackupEvent(latest, sk, pk, false);
             const data = JSON.parse(decrypted);
+            const isLegacy = !parseDoubleEncryptedEnvelope(decrypted) && !_sessionBackupPassword;
             vault.users = { ...vault.users, ...data.users };
             if (data.settings) {
                 vault.settings = { ...vault.settings, ...data.settings };
                 debugMode = vault.settings.debugMode || false;
             }
             saveLocalNonceBackup();
-            return true;
+            return { found: true, isLegacy: !vault.settings.hasBackupPassword };
         } catch (e) {
             // If it's a double-encrypted backup and we don't have the password,
             // try interactively (prompt the user)
@@ -626,18 +682,18 @@ async function silentRestoreFromNostr() {
                         debugMode = vault.settings.debugMode || false;
                     }
                     saveLocalNonceBackup();
-                    return true;
+                    return { found: true, isLegacy: false };
                 } catch (e2) {
                     debugLog('silentRestoreFromNostr: interactive decrypt failed:', e2);
-                    return false;
+                    return { found: false, isLegacy: false };
                 }
             }
             debugLog('silentRestoreFromNostr: decrypt failed:', e);
-            return false;
+            return { found: false, isLegacy: false };
         }
     }
 
-    return false;
+    return { found: false, isLegacy: false };
 }
 
 /**
