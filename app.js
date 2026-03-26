@@ -2300,7 +2300,6 @@ document.addEventListener('DOMContentLoaded', () => {
         btnDecrementNonce: () => decrementNonce(),
         btnIncrementNonce: () => incrementNonce(),
         btnToggleVisibility: () => togglePasswordVisibility(),
-        btnCopyPassword: () => copyPassword(),
         btnSaveAndCopy: () => saveAndCopy(),
         btnBackupToNostr: () => backupToNostr(),
         btnRestoreFromNostr: () => restoreFromNostr(),
