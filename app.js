@@ -97,6 +97,8 @@ function showScreen(screenId) {
                 ? '<span>🔒 Backup password: ✅ set</span>'
                 : '<span>🔒 Backup password: not set</span>';
         }
+    } else if (screenId === 'settingsScreen') {
+        updateBackupWarningIndicator();
     } else if (screenId === 'advancedScreen') {
         document.getElementById('hashLengthSetting').value = vault.settings.hashLength || 16;
         debugMode = vault.settings.debugMode || false;
@@ -945,7 +947,7 @@ function copyPassword() {
     saveLocalNonceBackup();
 
     // Background sync to Nostr
-    backupToNostrSilent();
+    backupToNostrDebounced();
 }
 
 /**
@@ -977,7 +979,7 @@ function deleteSite(site, user) {
 
     showToast('Site deleted');
     renderSiteList();
-    backupToNostrSilent();
+    backupToNostrDebounced();
 }
 
 /**
@@ -986,6 +988,34 @@ function deleteSite(site, user) {
  */
 function backupToNostrSilent() {
     backupToNostr(true).catch(e => console.error('Silent backup failed:', e));
+}
+
+/**
+ * Debounced version of backupToNostrSilent.
+ * Coalesces rapid vault mutations (e.g. multiple copies) into a single backup
+ * after 3 seconds of inactivity.
+ */
+let _backupDebounceTimer = null;
+function backupToNostrDebounced() {
+    if (_backupDebounceTimer) clearTimeout(_backupDebounceTimer);
+    _backupDebounceTimer = setTimeout(() => {
+        backupToNostrSilent();
+        _backupDebounceTimer = null;
+    }, 3000);
+}
+
+/**
+ * Show or hide a subtle warning indicator on the Cloud Backup settings item
+ * when the last silent backup failed (no relays confirmed the event).
+ */
+function updateBackupWarningIndicator() {
+    const el = document.getElementById('backupWarningBadge');
+    if (!el) return;
+    if (vault.settings.lastBackupFailed) {
+        el.classList.remove('hidden');
+    } else {
+        el.classList.add('hidden');
+    }
 }
 
 // ============================================
@@ -1099,7 +1129,7 @@ function saveEncrypted() {
     localStorage.setItem('vaultEncrypted', JSON.stringify(stored));
 
     showToast('Vault saved!');
-    backupToNostrSilent();
+    backupToNostrDebounced();
     showScreen('settingsScreen');
 }
 
@@ -1158,7 +1188,7 @@ function triggerImport() {
             });
             if (data.settings) vault.settings = { ...vault.settings, ...data.settings };
             renderSiteList();
-            backupToNostrSilent();
+            backupToNostrDebounced();
             showToast(`Imported ${siteCount} site(s)!`);
         } catch (err) {
             // JSON parse errors are not sensitive
@@ -1181,6 +1211,8 @@ function saveAdvancedSettings() {
     const len = parseInt(document.getElementById('hashLengthSetting').value) || 16;
     vault.settings.hashLength = Math.max(8, Math.min(64, len));
     vault.settings.debugMode = debugMode;
+    saveLocalNonceBackup();
+    backupToNostrDebounced();
     showToast('Settings saved');
     showScreen('settingsScreen');
 }
@@ -1192,6 +1224,7 @@ function saveAdvancedSettings() {
 function toggleDebugMode() {
     debugMode = document.getElementById('debugModeToggle').checked;
     vault.settings.debugMode = debugMode;
+    backupToNostrDebounced();
 }
 
 /**
@@ -1568,7 +1601,10 @@ async function backupToNostr(silent = false, overridePassword = null) {
         for (const url of RELAYS) {
             try {
                 const relay = await connectRelay(url);
-                relay.publish(event);
+                await Promise.race([
+                    relay.publish(event),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000))
+                ]);
                 relay.close();
                 success++;
                 successRelays.push(url);
@@ -1581,6 +1617,8 @@ async function backupToNostr(silent = false, overridePassword = null) {
         debugLog(`backupToNostr: succeeded on ${success}/${RELAYS.length} relays`, successRelays);
 
         if (success > 0) {
+            vault.settings.lastBackupFailed = false;
+            updateBackupWarningIndicator();
             if (!silent) showToast(`Backed up to ${success} relays`);
 
             if (debugMode) {
@@ -1595,6 +1633,10 @@ async function backupToNostr(silent = false, overridePassword = null) {
                 }
             }
         } else {
+            if (silent) {
+                vault.settings.lastBackupFailed = true;
+                updateBackupWarningIndicator();
+            }
             if (!silent) showToast('Backup failed');
         }
     } catch (e) {
