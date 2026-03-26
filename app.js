@@ -734,6 +734,22 @@ function lockVault(skipConfirm = false) {
     nostrKeys = { nsec: '', npub: '' };
     _sessionBackupPassword = null;
     navigationStack = ['welcomeScreen'];
+
+    // Wipe all sensitive data from DOM
+    document.querySelectorAll('input').forEach(el => { el.value = ''; });
+    document.querySelectorAll('[data-seed-word], .seed-word, .word-item, .word-display').forEach(el => {
+        el.textContent = '';
+    });
+    // Wipe any containers that might show seed words
+    ['seedPhraseDisplay','seedWords','mnemonicWords','seedBackupScreen','setupSeedScreen','verifyScreen','seedDisplay'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.querySelectorAll('input, span, div, p').forEach(child => {
+            child.textContent = '';
+            if ('value' in child) child.value = '';
+        });
+    });
+
     showScreen('welcomeScreen');
     showToast('Vault locked');
 }
